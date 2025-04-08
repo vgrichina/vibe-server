@@ -25,7 +25,7 @@ Generate comprehensive unit tests for the chat completions endpoint:
 - **Implementation Notes**:
   - Use Node’s `http` module to send requests.
   - Parse SSE stream manually to verify chunks.
-  - Mock `console.log` for logging checks.
+  - Mock `console.log` for logging checks. Don't use `jest.mock` for this.
 
 ## Context: bin/server.js, src/redis.js, src/endpoints/chat.js
 ## Output: tests/test_chat_completions.js
