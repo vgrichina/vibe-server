@@ -1,0 +1,5 @@
+{
+  "stacks": ["core", "tests"],
+  "output": ".",
+  "testCmd": "tape output/current/tests/**/*.js"
+}
