@@ -25,4 +25,5 @@ Generate comprehensive unit tests for the basic Hono server setup:
   - Mock `console.log` and `process.on` to capture logs and signals.
   - Start the server in a child process to test startup/shutdown.
 
+## Context: bin/server.js
 ## Output: tests/test_server.js
