@@ -1,0 +1,31 @@
+# SSO Integration
+
+Add SSO integration for tenant-specific authentication using Google OAuth simulation:
+
+- **Auth Endpoint**: `POST /auth/google`
+  - Query param: `tenantId` (required).
+  - Body: `{"code": "mock-google-code"}` (simulated OAuth code).
+  - Fetch tenant config from Redis; validate `google_oauth.client_id` and `client_secret`.
+  - Generate mock JWT:
+    ```json
+    {
+      "tenantId": "<tenantId>",
+      "userId": "user-123",
+      "group": "google_logged_in",
+      "exp": "<timestamp + 3600>"
+    }
+    ```
+  - Return: `{"token": "mock-jwt-<tenantId>-<userId>"}`.
+- **Chat Endpoint Update**:
+  - Update `/v1/chat/completions` to check `Authorization: Bearer <token>` header if present.
+  - Validate JWT (mock check: split token and match `tenantId`); set `group_id` from JWT if valid.
+  - Return 401 with `{"error": "Invalid or missing token"}` if invalid.
+
+- **Implementation Notes**:
+  - Log `[INFO] User authenticated for <tenantId>:<userId>` on successful login.
+  - Hardcode JWT expiration to 1 hour for now.
+
+## Context: bin/server.js, src/redis.js, src/endpoints/chat.js
+## Output: src/auth.js
+## Output: src/endpoints/chat.js
+## Output: bin/server.js
