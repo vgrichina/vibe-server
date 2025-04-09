@@ -2,9 +2,6 @@
 
 Generate comprehensive unit tests for the caching system:
 
-- **Test Framework**: Use `tape` with Node.js builtins.
-- **Mocking**:
-  - Mock Redis with updated `tenant:abc:config` including caching settings.
 - **Test Cases**:
   1. **Cache Hit**:
      - Preload `cache:abc:anonymous:intro-conversation-v1` with mock data.

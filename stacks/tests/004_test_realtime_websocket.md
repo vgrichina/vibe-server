@@ -2,9 +2,6 @@
 
 Generate comprehensive unit tests for the realtime WebSocket API:
 
-- **Test Framework**: Use `tape` with Node.js builtins.
-- **Mocking**:
-  - Mock Redis with `tenant:abc:config` and `tokens:abc:anonymous:anonymous-uuid` set to 100.
 - **Test Cases**:
   1. **Initialize Session**:
      - Send `POST /v1/realtime/initialize` with `X-Tenant-Id: abc`, body as above.

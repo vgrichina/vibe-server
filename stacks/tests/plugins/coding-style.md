@@ -1,9 +1,10 @@
+- Think carefully and only do what is asked with the most concise and elegant solution that changes as little as possible.
 - Generate only the files which have corresponding Output: directive. 
 - Don't assume any other files besides Output: and Context: exist.
 - Use ES6+ syntax with async/await and import/export.
+- Use async/await with `tape` for tests.
 - Don't create nested tests 
-- Use async/await with `tape`
 - Don't use `t.end` or `t.plan`
 - Cleanup using `finally`. Don't use `catch` unless you are expecting an error.
-- Use `t.capture`, `t.captureFn` and `t.intercept` as needed.
+- Use `t.capture(obj, method, implementation = () => {})`, `t.captureFn(original)` and `t.intercept(obj, property, desc = {}, strictMode = true)` as needed.
 - Don't try to use `jest.mock`, we are using `tape`.

@@ -2,9 +2,6 @@
 
 Generate comprehensive unit tests for the chat completions endpoint:
 
-- **Test Framework**: Use `tape` with Node.js builtins.
-- **Mocking**:
-  - Mock Redis with `tenant:abc:config` (from Step 2) and `tokens:abc:anonymous:anonymous-uuid` set to 100.
 - **Test Cases**:
   1. **Streaming Response**:
      - Send `POST /v1/chat/completions` with `X-Tenant-Id: abc`, body: `{"messages": [{"role": "user", "content": "Hi"}], "stream": true, "group_id": "anonymous"}`.

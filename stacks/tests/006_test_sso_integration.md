@@ -2,9 +2,6 @@
 
 Generate comprehensive unit tests for SSO integration:
 
-- **Test Framework**: Use `tape` with Node.js builtins.
-- **Mocking**:
-  - Mock Redis with `tenant:abc:config` including Google OAuth keys.
 - **Test Cases**:
   1. **Google Auth**:
      - Send `POST /auth/google?tenantId=abc` with mock body.

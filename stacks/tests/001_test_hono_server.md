@@ -2,7 +2,6 @@
 
 Generate comprehensive unit tests for the basic Hono server setup:
 
-- **Test Framework**: Use `tape` with Node.js builtins (no external dependencies beyond `tape`).
 - **Test Cases**:
   1. **Server Startup**:
      - Verify the server starts and listens on port 3000. Just make an HTTP request to the server, don't check where it's bound.
@@ -18,8 +17,9 @@ Generate comprehensive unit tests for the basic Hono server setup:
 
 - **Implementation Notes**:
   - Use `app.fetch` to make HTTP requests without starting the server.
-  - Mock `console.log` and `process.on` to capture logs and signals.
+  - Mock `console.log` to capture logs.
   - Use server as a module to test the server instance.
+  - Don't test stuff which requires starting a separate process (like signal handling).
 
 ## Context: bin/server.js
 ## Output: tests/test_server.js
