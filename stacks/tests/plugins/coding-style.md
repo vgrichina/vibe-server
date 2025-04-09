@@ -6,3 +6,4 @@
 - Don't use `t.end` or `t.plan`
 - Cleanup using `finally`. Don't use `catch` unless you are expecting an error.
 - Use `t.capture`, `t.captureFn` and `t.intercept` as needed.
+- Don't try to use `jest.mock`, we are using `tape`.

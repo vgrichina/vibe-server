@@ -61,8 +61,9 @@ Add multi-tenant support to the Hono server by integrating Redis for configurati
   - Log `[INFO] Loaded tenant config for <tenantId>` on successful config fetch.
   - Use async/await for Redis operations.
   - Make sure `createApp` takes the Redis client as part of the `deps` object.
+  - Update `test_server.js` to pass the Redis client as needed.
 
-## Context: bin/server.js
+## Context: bin/server.js, tests/test_server.js
 ## Output: src/redis.js
 ## Output: bin/server.js
-
+## Output: tests/test_server.js
