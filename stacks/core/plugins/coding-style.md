@@ -2,3 +2,4 @@
 - Generate only the files which have corresponding Output: directive. 
 - Don't assume any other files besides Output: and Context: exist.
 - Use ES6+ syntax with async/await and import/export.
+- Avoid dependencies on external libraries like `openai`: just use `fetch` to make HTTP requests.

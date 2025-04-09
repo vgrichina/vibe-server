@@ -2,9 +2,17 @@
 - Generate only the files which have corresponding Output: directive. 
 - Don't assume any other files besides Output: and Context: exist.
 - Use ES6+ syntax with async/await and import/export.
+
 - Use async/await with `tape` for tests.
 - Don't create nested tests 
 - Don't use `t.end` or `t.plan`
 - Cleanup using `finally`. Don't use `catch` unless you are expecting an error.
-- Use `t.capture(obj, method, implementation = () => {})`, `t.captureFn(original)` and `t.intercept(obj, property, desc = {}, strictMode = true)` as needed.
+- Use following to capture and intercept:
+  - `t.capture(obj, method, implementation = () => {})` - capture function calls for a method on an object
+    - call returned function to get the captured calls as an array with following format: `[{ args: [x, y, z], receiver: o, returned: a }, { args: [x, y, z], receiver: o, threw: true }]`
+  - `t.captureFn(original)` - capture function calls
+    - call `.results()` to get the captured calls as an array
+  - `t.intercept(obj, property, desc = {}, strictMode = true)` - intercept a property access on an object
+    - call `.results()` to get the captured calls as an array
 - Don't try to use `jest.mock`, we are using `tape`.
+- Don't use `sinon` or any other mocking library.
