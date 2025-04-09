@@ -22,7 +22,8 @@ Initialize the ResuLLM project with a basic Hono server to serve as the foundati
 **Implementation Notes**:
 - Use Hono’s built-in routing and middleware system.
 - Ensure the server shuts down gracefully on SIGTERM/SIGINT with a console log: `[INFO] Server shutting down`.
-- Don't start server when used as a module. 
+- Don't start server when used as a module. Use `import.meta.url.endsWith(process.argv[1])` to check.
+- Use `import { serve } from '@hono/node-server'` to start the server.
 - Expose `createApp` function that takes `deps` object as an argument and returns a promise that resolves to the `app` instance so that we can use it in tests like `createApp(deps).then(app => { app.fetch(...) })`.
 
 ## Output: bin/server.js

@@ -10,7 +10,7 @@ Generate comprehensive unit tests for the basic Hono server setup:
      - Send a GET request to `/`.
      - Assert status code is 200.
      - Assert response body is `{"message": "ResuLLM API is running"}`.
-     - Assert `Content-Type` header is `application/json`.
+     - Assert `Content-Type` header is `application/json`. Allow for `charset=utf-8` as well.
   3. **Error Handling**:
      - Use `/internal-error` route to test error handling.
      - Verify console log contains `[ERROR]` prefix (mock console.log).
@@ -20,7 +20,6 @@ Generate comprehensive unit tests for the basic Hono server setup:
   - Use `app.fetch` to make HTTP requests without starting the server.
   - Mock `console.log` and `process.on` to capture logs and signals.
   - Use server as a module to test the server instance.
-  - Use async/await with `tape`. Don't use `t.end` or `t.plan`. Cleanup using `finally`. Don't use `catch` unless you are expecting an error.
 
 ## Context: bin/server.js
 ## Output: tests/test_server.js
