@@ -19,7 +19,14 @@ Add the `/v1/chat/completions` endpoint for text-based LLM interactions, support
       "provider": "openai"
     }
     ```
-  - Validate body: `messages` (array, required), `model` (string, optional), `stream` (boolean, optional), `group_id` (string, required), `cache_key` (string, optional), `provider` (string, optional, defaults to tenant config's `default` provider).
+  - Validate body:
+    - `messages` (array, required): Must be properly formatted with `role` and `content`
+    - `model` (string, optional): Must be a supported model, return 400 if invalid
+    - `stream` (boolean, optional)
+    - `group_id` (string, required)
+    - `cache_key` (string, optional)
+    - `provider` (string, optional, defaults to tenant config's `default` provider)
+
 - **Behavior**:
   - Fetch tenant config from Redis via middleware.
   - Validate `group_id` exists in `user_groups` of tenant config; return 400 with `{"error": "Invalid group_id"}` if not.
@@ -27,6 +34,8 @@ Add the `/v1/chat/completions` endpoint for text-based LLM interactions, support
   - Check cache using `cache_key` if provided; return cached response if hit
   - If repeat request with same parameters, return existing conversation stream
   - Generate conversation ID if not provided
+  - Rate limit requests per tenant; return 429 with `{"error": {"message": "Rate limit exceeded"}}` if exceeded
+  - Validate context window size; return 400 if messages exceed token limit
   - If `stream: true`:
     - Use Hono's SSE support to stream response:
     ```
@@ -48,13 +57,21 @@ Add the `/v1/chat/completions` endpoint for text-based LLM interactions, support
       }]
     }
     ```
+
 - **Token Check**:
   - Fetch token balance from Redis: `tokens:<tenantId>:<group_id>:<userId>` (use `anonymous-<random-uuid>` as `userId` for `anonymous` group).
   - If tokens < 1, return 429 with `{"error": "Insufficient tokens"}`.
 
+- **Error Responses**:
+  - 400: Invalid request body, unsupported model, invalid group_id, messages exceed token limit
+  - 403: Missing API key configuration
+  - 429: Rate limit exceeded or insufficient tokens
+  - 500: Internal server error
+
 - **Implementation Notes**:
   - Log `[INFO] Processing chat completion for <tenantId>:<jobId>` for each request.
   - Support any OpenAI-compatible provider as a backend
+  - Use Hono's `streamSSE` to stream the response
 
 ## Context: bin/server.js, src/redis.js
 ## Output: src/endpoints/chat.js
