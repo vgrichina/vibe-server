@@ -19,4 +19,4 @@ Generate comprehensive unit tests for SSO integration:
   - Mock JWT validation logic.
 
 ## Context: bin/server.js, src/endpoints/chat.js, src/auth.js
-## Output: tests/test_sso.js
+## Output: tests/test_sso.test.js

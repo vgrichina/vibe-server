@@ -21,4 +21,4 @@ Generate comprehensive unit tests for the caching system:
   - Mock Redis with TTL simulation.
 
 ## Context: bin/server.js, src/endpoints/chat.js, src/cache.js
-## Output: tests/test_caching.js
+## Output: tests/test_caching.test.js

@@ -22,4 +22,4 @@ Generate comprehensive unit tests for the basic Hono server setup:
   - Don't test stuff which requires starting a separate process (like signal handling).
 
 ## Context: bin/server.js
-## Output: tests/test_server.js
+## Output: tests/test_server.test.js

@@ -53,5 +53,5 @@ Generate comprehensive unit tests for the chat completions endpoint:
   - Mock OpenAI API calls by starting a mock server and setting up API URL to point to it.
   - Test both success and error paths.
 
-## Context: bin/server.js, src/endpoints/chat.js, tests/test_server.js
-## Output: tests/test_chat_completions.js
+## Context: bin/server.js, src/endpoints/chat.js, tests/test_server.test.js
+## Output: tests/test_chat_completions.test.js

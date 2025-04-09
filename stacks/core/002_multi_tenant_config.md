@@ -108,6 +108,6 @@ Add multi-tenant support to the Hono server by integrating Redis for configurati
   - Make sure `createApp` takes the Redis client as part of the `deps` object.
   - Update `test_server.js` to pass the Redis client as needed. IMPORTANT: Don't introduce any new tests. Don't mock the Redis client.
 
-## Context: bin/server.js, tests/test_server.js
+## Context: bin/server.js, tests/test_server.test.js
 ## Output: bin/server.js
-## Output: tests/test_server.js
+## Output: tests/test_server.test.js
