@@ -3,8 +3,10 @@
   "version": "0.0.1",
   "description": "LLM API proxy with SSO and resumable conversations.",
   "main": "output/current/bin/server.js",
+  "type": "module",
   "scripts": {
     "build": "vibec",
+    "start": "node output/current/bin/server.js",
     "test": "tape output/current/tests/**/*.js"
   },
   "author": "",
@@ -16,6 +18,7 @@
   "dependencies": {
     "@hono/node-server": "^1.14.0",
     "hono": "^4.7.6",
-    "redis": "^4.7.0"
+    "redis": "^4.7.0",
+    "uuid": "^11.1.0"
   }
 }
