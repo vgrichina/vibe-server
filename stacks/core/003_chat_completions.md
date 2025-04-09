@@ -73,6 +73,6 @@ Add the `/v1/chat/completions` endpoint for text-based LLM interactions, support
   - Support any OpenAI-compatible provider as a backend
   - Use Hono's `streamSSE` to stream the response
 
-## Context: bin/server.js, src/redis.js
+## Context: bin/server.js
 ## Output: src/endpoints/chat.js
 ## Output: bin/server.js

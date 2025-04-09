@@ -61,6 +61,6 @@ Add WebSocket support for realtime voice/text interactions with detailed session
   - Log `[INFO] New realtime session: <sessionId>` on initialization.
   - Mock backend responses for now.
 
-## Context: bin/server.js, src/redis.js
+## Context: bin/server.js
 ## Output: src/endpoints/realtime.js
 ## Output: bin/server.js

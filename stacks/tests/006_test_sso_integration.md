@@ -18,5 +18,5 @@ Generate comprehensive unit tests for SSO integration:
   - Use Node’s `http` module for requests.
   - Mock JWT validation logic.
 
-## Context: bin/server.js, src/redis.js, src/endpoints/chat.js, src/auth.js
+## Context: bin/server.js, src/endpoints/chat.js, src/auth.js
 ## Output: tests/test_sso.js

@@ -22,5 +22,5 @@ Generate comprehensive unit tests for the realtime WebSocket API:
   - Use Node’s `ws` module for WebSocket testing.
   - Mock Redis operations with async functions.
 
-## Context: bin/server.js, src/redis.js, src/endpoints/realtime.js
+## Context: bin/server.js, src/endpoints/realtime.js
 ## Output: tests/test_realtime.js

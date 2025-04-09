@@ -20,5 +20,5 @@ Generate comprehensive unit tests for the caching system:
   - Use Node’s `http` module for requests.
   - Mock Redis with TTL simulation.
 
-## Context: bin/server.js, src/redis.js, src/endpoints/chat.js, src/cache.js
+## Context: bin/server.js, src/endpoints/chat.js, src/cache.js
 ## Output: tests/test_caching.js

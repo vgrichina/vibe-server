@@ -25,7 +25,7 @@ Add SSO integration for tenant-specific authentication using Google OAuth simula
   - Log `[INFO] User authenticated for <tenantId>:<userId>` on successful login.
   - Hardcode JWT expiration to 1 hour for now.
 
-## Context: bin/server.js, src/redis.js, src/endpoints/chat.js
+## Context: bin/server.js, src/endpoints/chat.js
 ## Output: src/auth.js
 ## Output: src/endpoints/chat.js
 ## Output: bin/server.js

@@ -27,6 +27,6 @@ Implement a caching system for text-based responses with tenant-configurable set
   - Use Redis `GET` and `SETEX` for cache operations.
   - Ensure cache is scoped by `tenantId` and `group_id` to prevent leakage.
 
-## Context: bin/server.js, src/redis.js, src/endpoints/chat.js
+## Context: bin/server.js, src/endpoints/chat.js
 ## Output: src/cache.js
 ## Output: src/endpoints/chat.js

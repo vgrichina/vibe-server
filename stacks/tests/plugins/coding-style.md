@@ -16,3 +16,4 @@
     - call `.results()` to get the captured calls as an array
 - Don't try to use `jest.mock`, we are using `tape`.
 - Don't use `sinon` or any other mocking library.
+- Use real Redis for testing, don't mock it.

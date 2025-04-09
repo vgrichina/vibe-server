@@ -19,5 +19,5 @@ Generate comprehensive unit tests for multi-tenant configuration:
 - **Implementation Notes**:
   - Mock `console.log` to capture logs.
 
-## Context: bin/server.js, src/redis.js, tests/test_server.js
+## Context: bin/server.js, tests/test_server.js
 ## Output: tests/test_multi_tenant.js
