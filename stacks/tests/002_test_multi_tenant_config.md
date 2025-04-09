@@ -6,9 +6,9 @@ Generate comprehensive unit tests for multi-tenant configuration:
   - **Config Initialization**:
      - Verify `tenant:abc:config` is set in Redis on startup if missing.
   - **Middleware - Valid Tenant**:
-     - Send a request with `X-Tenant-Id: abc`.
-     - Assert config is fetched and attached to context.
-     - Check `[INFO] Loaded tenant config for abc` in logs.
+     - Send a request with `X-Tenant-Id: abc`
+     - Assert config is fetched and attached to context as `tenantConfig`
+     - Check `[INFO] Loaded tenant config for abc` in logs
   - **Middleware - Missing Header**:
      - Send a request without `X-Tenant-Id`.
      - Assert 400 status with `{"error": "Missing X-Tenant-Id header"}`.
