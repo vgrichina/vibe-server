@@ -15,7 +15,6 @@ Add the `/v1/chat/completions` endpoint for text-based LLM interactions, support
       "model": "gpt-4o",
       "stream": true,
       "group_id": "team-xyz",
-      "cache_key": "intro-conversation-v1",
       "provider": "openai"
     }
     ```
@@ -24,15 +23,11 @@ Add the `/v1/chat/completions` endpoint for text-based LLM interactions, support
     - `model` (string, optional): Must be a supported model, return 400 if invalid
     - `stream` (boolean, optional)
     - `group_id` (string, required)
-    - `cache_key` (string, optional)
     - `provider` (string, optional, defaults to tenant config's `default` provider)
 
 - **Behavior**:
   - Fetch tenant config from Redis via middleware.
   - Validate `group_id` exists in `user_groups` of tenant config; return 400 with `{"error": "Invalid group_id"}` if not.
-  - Check `api_keys.openai` exists in tenant config; return 403 with `{"error": "No OpenAI API key configured"}` if missing.
-  - Check cache using `cache_key` if provided; return cached response if hit
-  - If repeat request with same parameters, return existing conversation stream
   - Generate conversation ID if not provided
   - Rate limit requests per tenant; return 429 with `{"error": {"message": "Rate limit exceeded"}}` if exceeded
   - Validate context window size; return 400 if messages exceed token limit
@@ -71,7 +66,7 @@ Add the `/v1/chat/completions` endpoint for text-based LLM interactions, support
 - **Implementation Notes**:
   - Log `[INFO] Processing chat completion for <tenantId>:<jobId>` for each request.
   - Support any OpenAI-compatible provider as a backend
-  - Use Hono's `streamSSE` to stream the response
+  - Use `import { streamSSE } from 'hono/streaming'` to stream the response using `stream.writeSSE`
 
 ## Context: bin/server.js
 ## Output: src/endpoints/chat.js
