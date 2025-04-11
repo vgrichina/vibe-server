@@ -1,10 +1,12 @@
 # Text-Based Chat Completions Endpoint
 
-Add the `/v1/chat/completions` endpoint for text-based LLM interactions, supporting resumable streaming:
+Add the `/:tenantId/v1/chat/completions` endpoint for text-based LLM interactions, supporting resumable streaming:
 
-- **Endpoint**: `POST /v1/chat/completions`
+- **Endpoint**: `POST /:tenantId/v1/chat/completions`
 - **Request**:
-  - Header: `X-Tenant-Id` (required, validated by middleware).
+  - Authorization: Bearer token (required)
+  - Path Parameters:
+    - `tenantId`: Tenant identifier (required)
   - Body: OpenAI-compatible JSON with additional fields:
     ```json
     {
@@ -12,22 +14,23 @@ Add the `/v1/chat/completions` endpoint for text-based LLM interactions, support
         {"role": "system", "content": "You are a helpful assistant."},
         {"role": "user", "content": "Hello, who are you?"}
       ],
-      "model": "gpt-4o",
-      "stream": true,
-      "group_id": "team-xyz",
-      "provider": "openai"
+      "model": "gpt-4",
+      "stream": true
     }
     ```
   - Validate body:
     - `messages` (array, required): Must be properly formatted with `role` and `content`
     - `model` (string, optional): Must be a supported model, return 400 if invalid
     - `stream` (boolean, optional)
-    - `group_id` (string, required)
-    - `provider` (string, optional, defaults to tenant config's `default` provider)
+
+- **Authorization**:
+  - Validate Bearer token with auth service
+  - Extract user ID from token claims
+  - Validate that user has access to the specified tenant
+  - Use tenant ID from path to fetch config from Redis
 
 - **Behavior**:
-  - Fetch tenant config from Redis via middleware.
-  - Validate `group_id` exists in `user_groups` of tenant config; return 400 with `{"error": "Invalid group_id"}` if not.
+  - Fetch tenant config from Redis using tenant ID from auth token
   - Generate conversation ID if not provided
   - Rate limit requests per tenant; return 429 with `{"error": {"message": "Rate limit exceeded"}}` if exceeded
   - Validate context window size; return 400 if messages exceed token limit
@@ -38,7 +41,7 @@ Add the `/v1/chat/completions` endpoint for text-based LLM interactions, support
     data: {"id": "conv-123", "choices": [{"delta": {"content": " am"}}]}
     data: {"id": "conv-123", "choices": [{"delta": {"content": " Claude"}}]}
     ```
-    - Set headers: `Content-Type: text/event-stream`, `Cache-Control: no-cache`, `Connection: keep-alive`.
+    - Set headers: `Content-Type: text/event-stream`, `Cache-Control: no-cache`, `Connection: keep-alive`
   - If `stream: false`:
     - Return JSON response:
     ```json
@@ -54,17 +57,18 @@ Add the `/v1/chat/completions` endpoint for text-based LLM interactions, support
     ```
 
 - **Token Check**:
-  - Fetch token balance from Redis: `tokens:<tenantId>:<group_id>:<userId>` (use `anonymous-<random-uuid>` as `userId` for `anonymous` group).
-  - If tokens < 1, return 429 with `{"error": "Insufficient tokens"}`.
+  - Fetch token balance from Redis using tenant ID and user ID from auth token
+  - If tokens < 1, return 429 with `{"error": "Insufficient tokens"}`
 
 - **Error Responses**:
-  - 400: Invalid request body, unsupported model, invalid group_id, messages exceed token limit
-  - 403: Missing API key configuration
+  - 400: Invalid request body, unsupported model, messages exceed token limit
+  - 401: Invalid or missing Bearer token
+  - 403: Missing API key configuration or unauthorized tenant access
   - 429: Rate limit exceeded or insufficient tokens
   - 500: Internal server error
 
 - **Implementation Notes**:
-  - Log `[INFO] Processing chat completion for <tenantId>:<jobId>` for each request.
+  - Log `[INFO] Processing chat completion for <tenantId>:<jobId>` for each request
   - Support any OpenAI-compatible provider as a backend
   - Use `import { streamSSE } from 'hono/streaming'` to stream the response using `stream.writeSSE`
 

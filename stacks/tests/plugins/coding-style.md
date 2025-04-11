@@ -6,4 +6,4 @@
 - Use `jest` for tests.
 - Cleanup using `finally`. Don't use `catch` unless you are expecting an error.
 - Don't use `sinon` or any other mocking library.
-- Use real Redis for testing, don't mock it.
+- Use real Redis for testing, don't ever mock Redis.

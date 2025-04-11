@@ -90,24 +90,80 @@ Add multi-tenant support to the Hono server by integrating Redis for configurati
   - Use Redis `SET` with JSON.stringify to store the config on server startup if it doesn't exist.
 
 - **Middleware**:
-  - Add a Hono middleware to extract `X-Tenant-Id` from request headers.
-  - Fetch the tenant config from Redis using `GET` and parse with JSON.parse.
-  - If `X-Tenant-Id` is missing, return 400 with `{"error": "Missing X-Tenant-Id header"}`.
-  - If tenant config isn't found in Redis, return 400 with `{"error": "Invalid tenant ID"}`.
-  - Attach the parsed config to the request context (e.g., `c.set('tenantConfig', config)`).
+  - Extract tenant ID from the URL path prefix (e.g., `/:tenantId/...`)
+  - If no tenant ID in path, use "default" as the tenant ID
+  - Fetch the tenant config from Redis using `GET` and parse with JSON.parse
+  - If tenant config isn't found in Redis, return 400 with `{"error": "Invalid tenant ID"}`
+  - Attach the parsed config to the request context (e.g., `c.set('tenantConfig', config)`)
 
 - **Token Management**:
-  - Store token balances in Redis using key pattern: `tokens:<tenantId>:<group>:<userId>`.
-  - For anonymous users, generate temporary session IDs as userId.
-  - Token allocation configurable per user group in tenant config.
+  - Store token balances in Redis using key pattern: `apiKey:<apiKey>`.
+  - For anonymous users, generate API keys with prefix "temp_" using uuid.
+  - For registered users, generate API keys with prefix "user_" using uuid.
+  - Store API key metadata in Redis using structure:
+    ```json
+    {
+      "userId": "<userId or null for anonymous>",
+      "createdAt": "<timestamp>",
+      "tokensLeft": 1000
+    }
+    ```
+  - Track token usage by decrementing `tokensLeft` field.
+  - When `tokensLeft` reaches 0, return 402 Payment Required.
+  - Expire anonymous API keys after 24 hours.
 
 - **Implementation Notes**:
   - Ensure Redis client is initialized before the server starts listening.
   - Log `[INFO] Loaded tenant config for <tenantId>` on successful config fetch.
   - Use async/await for Redis operations.
   - Make sure `createApp` takes the Redis client as part of the `deps` object.
-  - Update `test_server.js` to pass the Redis client as needed. IMPORTANT: Don't introduce any new tests. Don't mock the Redis client.
+  - Update `test_server.js` to pass the Redis client as needed.
+  - IMPORTANT: Don't introduce any new tests. Don't mock the Redis client.
   - Use `uuid` to generate IDs when needed.
+
+- **API Endpoints**:
+
+  - **Anonymous Login**:
+    ```
+    POST /:tenantId/auth/anonymous
+    Response 200:
+    {
+      "apiKey": "temp_<uuid>",
+      "tokensLeft": 100
+    }
+    ```
+    - Generates a new temporary API key with anonymous user group limits
+    - Sets expiration for 24 hours in Redis
+    - Returns the API key and initial token balance
+
+  - **Tenant Configuration**:
+    ```
+    GET /:tenantId/admin/config
+    Headers:
+      Authorization: Bearer <admin_token>
+    Response 200:
+    {
+      "config": <tenant_config_object>
+    }
+    ```
+
+    ```
+    PUT /:tenantId/admin/config
+    Headers:
+      Authorization: Bearer <admin_token>
+    Body:
+    {
+      "config": <tenant_config_object>
+    }
+    Response 200:
+    {
+      "success": true
+    }
+    ```
+    - Admin-only endpoints for managing tenant configuration
+    - Requires valid admin authentication
+    - GET retrieves current tenant config for the specified tenant
+    - PUT updates tenant config (full replace)
 
 ## Context: bin/server.js, tests/test_server.test.js
 ## Output: bin/server.js

@@ -4,20 +4,45 @@ Generate comprehensive unit tests for multi-tenant configuration:
 
 - **Test Cases**:
   - **Config Initialization**:
-     - Verify `tenant:abc:config` is set in Redis on startup if missing.
+     - Verify `config:abc` is set in Redis on startup if missing.
+     
   - **Middleware - Valid Tenant**:
-     - Send a request with `X-Tenant-Id: abc`
+     - Send a request to `/abc/some/path`
      - Assert config is fetched and attached to context as `tenantConfig`
      - Check `[INFO] Loaded tenant config for abc` in logs
-  - **Middleware - Missing Header**:
-     - Send a request without `X-Tenant-Id`.
-     - Assert 400 status with `{"error": "Missing X-Tenant-Id header"}`.
+
+  - **Middleware - Default Tenant**:
+     - Send a request to `/some/path` (no tenant ID)
+     - Assert "default" tenant config is used
+     - Check `[INFO] Loaded tenant config for default` in logs
+
   - **Middleware - Invalid Tenant**:
-     - Send a request with `X-Tenant-Id: xyz` (not in Redis).
-     - Assert 400 status with `{"error": "Invalid tenant ID"}`.
+     - Send a request to `/xyz/some/path` (tenant not in Redis)
+     - Assert 400 status with `{"error": "Invalid tenant ID"}`
+
+  - **Anonymous Login**:
+     - Send POST to `/abc/auth/anonymous`
+     - Assert 200 response with structure:
+       ```json
+       {
+         "apiKey": "temp_<uuid>",
+         "tokensLeft": 100
+       }
+       ```
+     - Verify API key exists in Redis with correct metadata
+     - Verify 24-hour expiration is set
+
+  - **Tenant Config Management**:
+     - GET `/abc/admin/config` without auth header returns 401
+     - GET `/abc/admin/config` with invalid auth returns 403
+     - GET `/abc/admin/config` with valid auth returns current config
+     - PUT `/abc/admin/config` with valid auth updates config
+     - PUT `/abc/admin/config` with invalid config schema returns 400
 
 - **Implementation Notes**:
-  - Mock `console.log` to capture logs.
+  - Mock `console.log` to capture logs
+  - Use real Redis instance for tests (no mocking)
+  - Clean up Redis test data after each test
 
 ## Context: bin/server.js, tests/test_server.test.js
 ## Output: tests/test_multi_tenant.test.js
