@@ -41,6 +41,7 @@ Generate comprehensive unit tests for multi-tenant configuration:
 
 - **Implementation Notes**:
   - Mock `console.log` to capture logs
+  - Don't mock UUIDs
   - Use real Redis instance for tests (no mocking)
   - Clean up Redis test data after each test
 

@@ -4,6 +4,7 @@
 - Use ES6+ syntax with async/await and import/export.
 
 - Use `jest` for tests.
+- import {jest} from '@jest/globals'
 - Cleanup using `finally`. Don't use `catch` unless you are expecting an error.
 - Don't use `sinon` or any other mocking library.
-- Use real Redis for testing, don't ever mock Redis.
+- IMPORTANT: Use only real Redis for testing. Don't mock it.
