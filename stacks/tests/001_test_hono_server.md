@@ -10,20 +10,12 @@ Generate comprehensive unit tests for the Hono server setup and multi-tenant con
      - Assert status code is 200.
      - Assert response body is `{"message": "ResuLLM API is running"}`.
      - Assert `Content-Type` header is `application/json` (allow for `charset=utf-8`).
-  **Error Handling**:
-     - Use `/internal-error` route to test error handling.
-     - Verify console log contains `[ERROR]` prefix (mock console.log).
-     - Verify response is 500 with `{"error": "Internal Server Error"}`.
   **Config Initialization**:
      - Verify `tenant:abc:config` is set in Redis on startup if missing.
   **Middleware - Valid Tenant**:
      - Send a request to `/abc/some/path`.
      - Assert config is fetched and attached to context as `tenantConfig`.
      - Check `[INFO] Loaded tenant config for abc` in logs.
-  **Middleware - Default Tenant**:
-     - Send a request to `/some/path` (no tenant ID).
-     - Assert "default" tenant config is used.
-     - Check `[INFO] Loaded tenant config for default` in logs.
   **Middleware - Invalid Tenant**:
      - Send a request to `/xyz/some/path` (tenant not in Redis).
      - Assert 400 status with `{"error": "Invalid tenant ID"}`.

@@ -17,7 +17,6 @@ Initialize the ResuLLM project with a Hono server and integrate multi-tenant sup
 - **Error Handling**:
   - Catch uncaught exceptions and log them to console with prefix `[ERROR]`.
   - Return a 500 status with JSON: `{"error": "Internal Server Error"}` for unhandled errors.
-  - Expose `/internal-error` route that throws an error for testing error handling.
 
 - **Dependencies**:
   - Install `hono`, `redis`, and `uuid` as Node.js modules.
