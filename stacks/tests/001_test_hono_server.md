@@ -1,25 +1,58 @@
-# Test Hono Server Setup
+# Test Hono Server Setup and Multi-Tenant Configuration
 
-Generate comprehensive unit tests for the basic Hono server setup:
+Generate comprehensive unit tests for the Hono server setup and multi-tenant configuration:
 
 - **Test Cases**:
-  1. **Server Startup**:
-     - Verify the server starts and listens on port 3000. Just make an HTTP request to the server, don't check where it's bound.
-  2. **Root Endpoint (GET /)**:
+  **Server Startup**:
+     - Verify the server starts and listens on port 3000 by making an HTTP request to the server.
+  **Root Endpoint (GET /)**:
      - Send a GET request to `/`.
      - Assert status code is 200.
      - Assert response body is `{"message": "ResuLLM API is running"}`.
-     - Assert `Content-Type` header is `application/json`. Allow for `charset=utf-8` as well.
-  3. **Error Handling**:
+     - Assert `Content-Type` header is `application/json` (allow for `charset=utf-8`).
+  **Error Handling**:
      - Use `/internal-error` route to test error handling.
      - Verify console log contains `[ERROR]` prefix (mock console.log).
      - Verify response is 500 with `{"error": "Internal Server Error"}`.
+  **Config Initialization**:
+     - Verify `tenant:abc:config` is set in Redis on startup if missing.
+  **Middleware - Valid Tenant**:
+     - Send a request to `/abc/some/path`.
+     - Assert config is fetched and attached to context as `tenantConfig`.
+     - Check `[INFO] Loaded tenant config for abc` in logs.
+  **Middleware - Default Tenant**:
+     - Send a request to `/some/path` (no tenant ID).
+     - Assert "default" tenant config is used.
+     - Check `[INFO] Loaded tenant config for default` in logs.
+  **Middleware - Invalid Tenant**:
+     - Send a request to `/xyz/some/path` (tenant not in Redis).
+     - Assert 400 status with `{"error": "Invalid tenant ID"}`.
+  **Anonymous Login**:
+     - Send POST to `/abc/auth/anonymous`.
+     - Assert 200 response with structure:
+       ```json
+       {
+         "apiKey": "temp_<uuid>",
+         "tokensLeft": 100
+       }
+       ```
+     - Verify API key exists in Redis with correct metadata.
+     - Verify 24-hour expiration is set.
+  **Tenant Config Management**:
+     - GET `/abc/admin/config` without auth header returns 401.
+     - GET `/abc/admin/config` with invalid auth returns 403.
+     - GET `/abc/admin/config` with valid auth returns current config.
+     - PUT `/abc/admin/config` with valid auth updates config.
+     - PUT `/abc/admin/config` with invalid config schema returns 400.
 
 - **Implementation Notes**:
   - Use `app.fetch` to make HTTP requests without starting the server.
   - Mock `console.log` to capture logs.
   - Use server as a module to test the server instance.
   - Don't test stuff which requires starting a separate process (like signal handling).
+  - Don't mock UUIDs.
+  - Use real Redis instance for tests (no mocking).
+  - Clean up Redis test data after each test.
 
 ## Context: bin/server.js
 ## Output: tests/test_server.test.js
