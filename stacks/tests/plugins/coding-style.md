@@ -7,4 +7,5 @@
 - import {jest} from '@jest/globals'
 - Cleanup using `finally`. Don't use `catch` unless you are expecting an error.
 - Don't use `sinon` or any other mocking library.
+- Aboid `node-fetch` and use native `fetch` instead.
 - IMPORTANT: Use only real Redis for testing. Don't mock it.
