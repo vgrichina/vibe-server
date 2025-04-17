@@ -2062,10 +2062,10 @@ v8-to-istanbul@^9.0.1:
     "@types/istanbul-lib-coverage" "^2.0.1"
     convert-source-map "^2.0.0"
 
-vibec@^0.1.0:
-  version "0.1.0"
-  resolved "https://registry.yarnpkg.com/vibec/-/vibec-0.1.0.tgz#cdbd41d401673a7300aba7bd95a5a38ad83e80c3"
-  integrity sha512-HE0bg2sTCxkkr0TWO2sjFUi74nIXk11HKQ9VKM9j+arbZeCm9ItWywVc79A4kDYr47sSi1OtaPxChunhB+98ig==
+vibec@^0.1.1:
+  version "0.1.1"
+  resolved "https://registry.yarnpkg.com/vibec/-/vibec-0.1.1.tgz#d7d83604aada975ba0f7b7d54ded15bf2f9b7668"
+  integrity sha512-0RY3pswVmsOU93JPMNE/yg3phBKqBu4TogNry1eLwtb70NyH9pK+HVFSlv2nZA6dzxxWJRwJzLgPoIcKu3t75Q==
 
 walker@^1.0.8:
   version "1.0.8"
