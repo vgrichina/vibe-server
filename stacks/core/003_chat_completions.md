@@ -35,7 +35,7 @@ Add the `/:tenantId/v1/chat/completions` endpoint for text-based LLM interaction
   - Rate limit requests per tenant; return 429 with `{"error": {"message": "Rate limit exceeded"}}` if exceeded
   - Validate context window size; return 400 if messages exceed token limit
   - If `stream: true`:
-    - Use Hono's SSE support to stream response:
+    - Stream response via SSE:
     ```
     data: {"id": "conv-123", "choices": [{"delta": {"content": "I"}}]}
     data: {"id": "conv-123", "choices": [{"delta": {"content": " am"}}]}
@@ -70,7 +70,7 @@ Add the `/:tenantId/v1/chat/completions` endpoint for text-based LLM interaction
 - **Implementation Notes**:
   - Log `[INFO] Processing chat completion for <tenantId>:<jobId>` for each request
   - Support any OpenAI-compatible provider as a backend
-  - Use `import { streamSSE } from 'hono/streaming'` to stream the response using `stream.writeSSE`
+  - Don't introduce any new dependencies besides `susie`
 
 ## Context: bin/server.js
 ## Output: src/endpoints/chat.js

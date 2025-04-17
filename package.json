@@ -16,8 +16,9 @@
     "vibec": "^0.1.1"
   },
   "dependencies": {
-    "@hono/node-server": "^1.14.0",
-    "hono": "^4.7.6",
+    "koa": "^2.16.1",
+    "koa-bodyparser": "^4.4.1",
+    "koa-router": "^13.0.1",
     "redis": "^4.7.0",
     "uuid": "^11.1.0"
   }

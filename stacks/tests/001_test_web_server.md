@@ -1,6 +1,6 @@
-# Test Hono Server Setup and Multi-Tenant Configuration
+# Test Web Server Setup and Multi-Tenant Configuration
 
-Generate comprehensive unit tests for the Hono server setup and multi-tenant configuration:
+Generate comprehensive unit tests for the Web server and multi-tenant configuration:
 
 - **Test Cases**:
   **Server Startup**:
@@ -8,13 +8,13 @@ Generate comprehensive unit tests for the Hono server setup and multi-tenant con
   **Root Endpoint (GET /)**:
      - Send a GET request to `/`.
      - Assert status code is 200.
-     - Assert response body is `{"message": "ResuLLM API is running"}`.
+     - Assert response body is `{"message": "vibe-server API is running"}`.
      - Assert `Content-Type` header is `application/json` (allow for `charset=utf-8`).
   **Config Initialization**:
      - Verify `tenant:abc:config` is set in Redis on startup if missing.
   **Middleware - Valid Tenant**:
      - Send a request to `/abc/some/path`.
-     - Assert config is fetched and attached to context as `tenantConfig`.
+     - Assert config is fetched and attached to context as `tenantConfig`. Make sure to use valid config.
      - Check `[INFO] Loaded tenant config for abc` in logs.
   **Middleware - Invalid Tenant**:
      - Send a request to `/xyz/some/path` (tenant not in Redis).
@@ -38,7 +38,6 @@ Generate comprehensive unit tests for the Hono server setup and multi-tenant con
      - PUT `/abc/admin/config` with invalid config schema returns 400.
 
 - **Implementation Notes**:
-  - Use `app.fetch` to make HTTP requests without starting the server.
   - Mock `console.log` to capture logs.
   - Use server as a module to test the server instance.
   - Don't test stuff which requires starting a separate process (like signal handling).

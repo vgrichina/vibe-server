@@ -1,8 +1,12 @@
-# ResuLLM Hono Server Setup with Multi-Tenant Configuration
+# Web Server Setup with Multi-Tenant Configuration
 
-Initialize the ResuLLM project with a Hono server and integrate multi-tenant support using Redis for configuration storage:
-
-- **Framework**: Use Hono with Node.js runtime (v18+), written in plain JavaScript (ES6+).
+- **Dependencies**:
+  - Node.js v18+
+  - `koa`
+  - `koa-router`
+  - `koa-bodyparser`
+  - `redis`
+  - `uuid`
 
 - **Server Configuration**:
   - Listen on port 3000.
@@ -10,7 +14,7 @@ Initialize the ResuLLM project with a Hono server and integrate multi-tenant sup
 
 - **Root Endpoint**:
   - `GET /`
-  - Returns a JSON response: `{"message": "ResuLLM API is running"}`.
+  - Returns a JSON response: `{"message": "vibe-server API is running"}`.
   - Status code: 200.
   - Headers: `Content-Type: application/json`.
 
@@ -18,9 +22,6 @@ Initialize the ResuLLM project with a Hono server and integrate multi-tenant sup
   - Catch uncaught exceptions and log them to console with prefix `[ERROR]`.
   - Return a 500 status with JSON: `{"error": "Internal Server Error"}` for unhandled errors.
 
-- **Dependencies**:
-  - Install `hono`, `redis`, and `uuid` as Node.js modules.
-  - No external configuration files yet—just hardcode the port.
 
 - **Redis Integration**:
   - Use the `redis` npm package to connect to a Redis instance (default: `redis://localhost:6379`).
@@ -115,6 +116,7 @@ Initialize the ResuLLM project with a Hono server and integrate multi-tenant sup
   - Fetch the tenant config from Redis using `GET` and parse with JSON.parse.
   - If tenant config isn't found in Redis, return 400 with `{"error": "Invalid tenant ID"}`.
   - Attach the parsed config to the request context (e.g., `c.set('tenantConfig', config)`).
+  - Apply only to routes that require :tenantId in the path.
 
 - **Token Management**:
   - Store token balances in Redis using key pattern: `apiKey:<apiKey>`.
@@ -133,10 +135,9 @@ Initialize the ResuLLM project with a Hono server and integrate multi-tenant sup
   - Expire anonymous API keys after 24 hours.
 
 - **Implementation Notes**:
-  - Use Hono’s built-in routing and middleware system.
+  - Use plain JavaScript (ES6+)
   - Ensure the server shuts down gracefully on SIGTERM/SIGINT with a console log: `[INFO] Server shutting down`.
   - Don't start server when used as a module. Use `import.meta.url.endsWith(process.argv[1])` to check.
-  - Use `import { serve } from '@hono/node-server'` to start the server.
   - Expose `createApp` function that takes `deps` object (including Redis client) as an argument and returns a promise that resolves to the `app` instance for testing.
   - Ensure Redis client is initialized before the server starts listening.
   - Log `[INFO] Loaded tenant config for <tenantId>` on successful config fetch.
