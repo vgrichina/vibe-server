@@ -4,7 +4,7 @@ Generate comprehensive unit tests for the Web server and multi-tenant configurat
 
 - **Test Cases**:
   **Server Startup**:
-     - Verify the server starts and listens on port 3000 by making an HTTP request to the server.
+     - Verify the server starts and listens on a given port by making an HTTP request to the server.
   **Root Endpoint (GET /)**:
      - Send a GET request to `/`.
      - Assert status code is 200.

@@ -9,7 +9,7 @@
   - `uuid`
 
 - **Server Configuration**:
-  - Listen on port 3000.
+  - Listen on port 3000 by default. Use `process.env.PORT` to override.
   - Bind to `localhost` by default.
 
 - **Root Endpoint**:
