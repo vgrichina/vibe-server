@@ -7,7 +7,7 @@
   "scripts": {
     "build": "vibec",
     "start": "node output/current/bin/server.js",
-    "test": "jest --passWithNoTests --roots ./output/current/"
+    "test": "jest --passWithNoTests --roots ./output/current/ --runInBand"
   },
   "author": "",
   "license": "MIT",
