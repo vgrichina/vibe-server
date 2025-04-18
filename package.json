@@ -16,6 +16,7 @@
     "vibec": "^0.1.1"
   },
   "dependencies": {
+    "jsonwebtoken": "^9.0.2",
     "koa": "^2.16.1",
     "koa-bodyparser": "^4.4.1",
     "koa-easy-ws": "^2.1.0",

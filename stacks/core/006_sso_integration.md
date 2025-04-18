@@ -16,10 +16,6 @@ Add SSO integration for tenant-specific authentication using Google OAuth simula
     }
     ```
   - Return: `{"token": "mock-jwt-<tenantId>-<userId>"}`.
-- **Chat Endpoint Update**:
-  - Update `/v1/chat/completions` to check `Authorization: Bearer <token>` header if present.
-  - Validate JWT (mock check: split token and match `tenantId`) 
-  - Return 401 with `{"error": "Invalid or missing token"}` if invalid.
 
 - **Implementation Notes**:
   - Log `[INFO] User authenticated for <tenantId>:<userId>` on successful login.
