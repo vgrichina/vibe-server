@@ -35,13 +35,14 @@ Add the `/:tenantId/v1/chat/completions` endpoint for text-based LLM interaction
   - Rate limit requests per tenant; return 429 with `{"error": {"message": "Rate limit exceeded"}}` if exceeded
   - Validate context window size; return 400 if messages exceed token limit
   - If `stream: true`:
+    - Set headers: `Content-Type: text/event-stream`, `Cache-Control: no-cache`, `Connection: keep-alive`
+    - Set `ctx.status` to 200.
     - Stream response via SSE:
     ```
     data: {"id": "conv-123", "choices": [{"delta": {"content": "I"}}]}
     data: {"id": "conv-123", "choices": [{"delta": {"content": " am"}}]}
     data: {"id": "conv-123", "choices": [{"delta": {"content": " Claude"}}]}
     ```
-    - Set headers: `Content-Type: text/event-stream`, `Cache-Control: no-cache`, `Connection: keep-alive`
   - If `stream: false`:
     - Return JSON response:
     ```json
@@ -69,7 +70,7 @@ Add the `/:tenantId/v1/chat/completions` endpoint for text-based LLM interaction
 
 - **Implementation Notes**:
   - Log `[INFO] Processing chat completion for <tenantId>:<jobId>` for each request
-  - Support any OpenAI-compatible provider as a backend
+  - Support any OpenAI-compatible provider as a backend. Don't mock the provider.
   - Make sure to update `bin/server.js` to add the new endpoint.
 
 ## Context: bin/server.js

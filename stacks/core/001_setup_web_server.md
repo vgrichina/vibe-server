@@ -99,12 +99,6 @@
             }
           }
         }
-      },
-      "caching": {
-        "enabled": true,
-        "text_ttl": 86400,
-        "transcription_ttl": 3600,
-        "fee_percentage": 20
       }
     }
     ```
@@ -117,20 +111,17 @@
   - Attach the parsed config to the request context.
 
 - **Token Management**:
-  - Store token balances in Redis using key pattern: `apiKey:<apiKey>`.
-  - For anonymous users, generate API keys with prefix "temp_" using uuid.
-  - For registered users, generate API keys with prefix "user_" using uuid.
-  - Store API key metadata in Redis using structure:
+  - Generate API keys using uuid.
+  - Store API key metadata in Redis using `SET apiKey:<apiKey>` to point to associated user ID.
+  - Store user data in Redis using `SET user:<userId>` with structure:
     ```json
     {
-      "userId": "<userId or null for anonymous>",
       "createdAt": "<timestamp>",
       "tokensLeft": 1000
     }
     ```
   - Track token usage by decrementing `tokensLeft` field.
   - When `tokensLeft` reaches 0, return 402 Payment Required.
-  - Expire anonymous API keys after 24 hours.
 
 - **Implementation Notes**:
   - Use plain JavaScript (ES6+)
@@ -151,9 +142,9 @@
       "tokensLeft": 100
     }
     ```
-    - Generates a new temporary API key with anonymous user group limits.
-    - Sets expiration for 24 hours in Redis.
-    - Returns the API key and initial token balance.
+    - Create new temporary user in Redis with anonymous user group limits (tokens, rate limit, etc).
+    - Generate a new temporary API key associated with the user.
+    - Returns the API key and current token balance / rate limit.
   - **Tenant Configuration**:
     ```
     GET /:tenantId/admin/config

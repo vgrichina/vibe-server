@@ -10,3 +10,5 @@
 - Don't use `sinon` or any other mocking library.
 - Avoid `node-fetch` and use native `fetch` instead.
 - IMPORTANT: Use only real Redis for testing. Don't mock it.
+- Use `server.listen` without port or host to use a random port during tests.
+- Don't check constructor equality like `.toBeInstanceOf(Array)`. Just check the values.

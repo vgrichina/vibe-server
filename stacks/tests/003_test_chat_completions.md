@@ -50,6 +50,7 @@ Generate comprehensive unit tests for the chat completions endpoint:
       - Verify proper handling of context window.
 
 - **Implementation Notes**:
+  - Setup full tenant config in Redis pointing to mock OpenAI API.
   - Include `Authorization` header in requests. Need to obtain API key from `POST /:tenantId/auth/anonymous`.
   - Mock OpenAI API calls by starting a mock server and setting up API URL to point to it.
   - Test both success and error paths.
