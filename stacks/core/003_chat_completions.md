@@ -70,7 +70,7 @@ Add the `/:tenantId/v1/chat/completions` endpoint for text-based LLM interaction
 - **Implementation Notes**:
   - Log `[INFO] Processing chat completion for <tenantId>:<jobId>` for each request
   - Support any OpenAI-compatible provider as a backend
-  - Don't introduce any new dependencies besides `susie`
+  - Make sure to update `bin/server.js` to add the new endpoint.
 
 ## Context: bin/server.js
 ## Output: src/endpoints/chat.js

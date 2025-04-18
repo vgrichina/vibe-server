@@ -11,13 +11,12 @@ Generate comprehensive unit tests for the Web server and multi-tenant configurat
      - Assert response body is `{"message": "vibe-server API is running"}`.
      - Assert `Content-Type` header is `application/json` (allow for `charset=utf-8`).
   **Config Initialization**:
-     - Verify `tenant:abc:config` is set in Redis on startup if missing.
+     - Verify `tenant:abc:config` is set in Redis on startup if missing. 
   **Middleware - Valid Tenant**:
-     - Send a request to `/abc/some/path`.
-     - Assert config is fetched and attached to context as `tenantConfig`. Make sure to use valid config.
-     - Check `[INFO] Loaded tenant config for abc` in logs.
+     - GET `/abc/admin/config`.
+     - Assert config is fetched and attached to context as `tenantConfig`. Make sure to use full valid config for testing.
   **Middleware - Invalid Tenant**:
-     - Send a request to `/xyz/some/path` (tenant not in Redis).
+     - Send a request to `/xyz/admin/config` (tenant not in Redis).
      - Assert 400 status with `{"error": "Invalid tenant ID"}`.
   **Anonymous Login**:
      - Send POST to `/abc/auth/anonymous`.
@@ -38,7 +37,6 @@ Generate comprehensive unit tests for the Web server and multi-tenant configurat
      - PUT `/abc/admin/config` with invalid config schema returns 400.
 
 - **Implementation Notes**:
-  - Mock `console.log` to capture logs.
   - Use server as a module to test the server instance.
   - Don't test stuff which requires starting a separate process (like signal handling).
   - Don't mock UUIDs.

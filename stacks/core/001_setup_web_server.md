@@ -108,15 +108,13 @@
       }
     }
     ```
-  - Use Redis `SET` with JSON.stringify to store the config.
+  - Use Redis `SET` with `JSON.stringify` to store the config.
 
 - **Middleware**:
-  - Extract tenant ID from the URL path prefix (e.g., `/:tenantId/...`).
-  - If no tenant ID in path, use "default" as the tenant ID.
-  - Fetch the tenant config from Redis using `GET` and parse with JSON.parse.
+  - Explicitly use with all /:tenantId/... routes.
+  - Fetch the tenant config from Redis using `GET` and parse with `JSON.parse`.
   - If tenant config isn't found in Redis, return 400 with `{"error": "Invalid tenant ID"}`.
-  - Attach the parsed config to the request context (e.g., `c.set('tenantConfig', config)`).
-  - Apply only to routes that require :tenantId in the path.
+  - Attach the parsed config to the request context.
 
 - **Token Management**:
   - Store token balances in Redis using key pattern: `apiKey:<apiKey>`.
