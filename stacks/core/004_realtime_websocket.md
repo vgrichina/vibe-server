@@ -21,12 +21,11 @@ Add WebSocket support for realtime voice/text interactions with detailed session
         }
       ],
       "ttsService": "openai",
-      "group_id": "anonymous",
       "cache_key": "weather-assistant-v1"
     }
     ```
-  - Validate: `backend` (enum: `openai_realtime`, `ultravox`), `group_id` (required), others optional.
-  - Check token balance in Redis (`tokens:<tenantId>:<group_id>:<userId>`); return 429 if < 1.
+  - Validate: `backend` (enum: `openai_realtime`, `ultravox`).
+  - Check token balance in Redis; return 429 if < 1.
   - Generate `sessionId`: `tenant:<tenantId>:session:<uuid>`.
   - Store session state in Redis: `session:<tenantId>:<sessionId>:state` with:
     ```json
@@ -35,7 +34,6 @@ Add WebSocket support for realtime voice/text interactions with detailed session
       "systemPrompt": "You are a helpful assistant",
       "tools": [{...}],
       "ttsService": "openai",
-      "group_id": "anonymous",
       "cache_key": "weather-assistant-v1",
       "tokensUsed": 0
     }

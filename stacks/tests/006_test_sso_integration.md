@@ -9,7 +9,6 @@ Generate comprehensive unit tests for SSO integration:
      - Check `[INFO] User authenticated` log.
   2. **Chat with Valid Token**:
      - Send `POST /v1/chat/completions` with `Authorization: Bearer mock-jwt-abc-user-123`.
-     - Assert `group_id` set to `google_logged_in`.
   3. **Chat with Invalid Token**:
      - Send with `Authorization: Bearer invalid`.
      - Assert 401 with `{"error": "Invalid or missing token"}`.

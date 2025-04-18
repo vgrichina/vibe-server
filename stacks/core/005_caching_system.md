@@ -16,7 +16,7 @@ Implement a caching system for text-based responses with tenant-configurable set
     ```
 - **Caching Logic**:
   - Update `/v1/chat/completions` to use caching:
-    - Cache key: `cache:<tenantId>:<group_id>:<cache_key>` (e.g., `cache:abc:anonymous:intro-conversation-v1`).
+    - Cache key: `cache:<tenantId>:<cache_key>` (e.g., `cache:abc:anonymous:intro-conversation-v1`).
     - On request:
       - If `cache_key` provided and caching enabled, check Redis for existing cache.
       - Cache hit: Return cached response (e.g., `{"id": "job-123", "choices": [{"text": "Cached response"}]}`) with 200.
@@ -25,7 +25,7 @@ Implement a caching system for text-based responses with tenant-configurable set
 
 - **Implementation Notes**:
   - Use Redis `GET` and `SETEX` for cache operations.
-  - Ensure cache is scoped by `tenantId` and `group_id` to prevent leakage.
+  - Ensure cache is scoped by `tenantId` to prevent leakage.
 
 ## Context: bin/server.js, src/endpoints/chat.js
 ## Output: src/cache.js
