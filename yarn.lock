@@ -1898,6 +1898,13 @@ koa-convert@^2.0.0:
     co "^4.6.0"
     koa-compose "^4.1.0"
 
+koa-easy-ws@^2.1.0:
+  version "2.1.0"
+  resolved "https://registry.yarnpkg.com/koa-easy-ws/-/koa-easy-ws-2.1.0.tgz#31e1ee1072fd1a72ffdc59706a0e54bc023e20ee"
+  integrity sha512-SF6RHIuHttkt9RdACWPRFlSOHPcVS87otBfChLx83vmB1en8uODmE5G1thuKd0qUPRZU8FvFHJXWIxf7ib9J1w==
+  dependencies:
+    debug "^4.1.1"
+
 koa-router@^13.0.1:
   version "13.0.1"
   resolved "https://registry.yarnpkg.com/koa-router/-/koa-router-13.0.1.tgz#09607d35011960847b864231e3d502e28509866b"
@@ -2584,6 +2591,11 @@ write-file-atomic@^4.0.2:
   dependencies:
     imurmurhash "^0.1.4"
     signal-exit "^3.0.7"
+
+ws@^8.18.1:
+  version "8.18.1"
+  resolved "https://registry.yarnpkg.com/ws/-/ws-8.18.1.tgz#ea131d3784e1dfdff91adb0a4a116b127515e3cb"
+  integrity sha512-RKW2aJZMXeMxVpnZ6bck+RswznaxmzdULiBr6KY7XkTnW8uvt0iT9H5DkHUChXrc+uurzwa0rVI16n/Xzjdz1w==
 
 y18n@^5.0.5:
   version "5.0.8"

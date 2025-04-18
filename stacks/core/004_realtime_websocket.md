@@ -57,7 +57,7 @@ Add WebSocket support for realtime voice/text interactions with detailed session
   - Store message history in Redis: `session:<tenantId>:<sessionId>:history` as a list.
 
 - **Implementation Notes**:
-  - Use `ws` npm package for WebSocket support.
+  - Use `koa-easy-ws` with `ws` npm package.
   - Log `[INFO] New realtime session: <sessionId>` on initialization.
   - Mock backend responses for now.
 
