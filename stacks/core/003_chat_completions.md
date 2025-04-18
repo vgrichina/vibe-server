@@ -37,7 +37,7 @@ Add the `/:tenantId/v1/chat/completions` endpoint for text-based LLM interaction
   - If `stream: true`:
     - Set headers: `Content-Type: text/event-stream`, `Cache-Control: no-cache`, `Connection: keep-alive`
     - Set `ctx.status` to 200.
-    - Stream response via SSE:
+    - Stream response via SSE (set `ctx.body` to a stream):
     ```
     data: {"id": "conv-123", "choices": [{"delta": {"content": "I"}}]}
     data: {"id": "conv-123", "choices": [{"delta": {"content": " am"}}]}
@@ -58,7 +58,8 @@ Add the `/:tenantId/v1/chat/completions` endpoint for text-based LLM interaction
     ```
 
 - **Token Check**:
-  - Fetch token balance from Redis using tenant ID and user ID from auth token
+  - Fetch user ID based on API key from auth token
+  - Fetch user data from Redis using user ID. This includes the user's token balance.
   - If tokens < 1, return 429 with `{"error": "Insufficient tokens"}`
 
 - **Error Responses**:
@@ -71,7 +72,7 @@ Add the `/:tenantId/v1/chat/completions` endpoint for text-based LLM interaction
 - **Implementation Notes**:
   - Log `[INFO] Processing chat completion for <tenantId>:<jobId>` for each request
   - Support any OpenAI-compatible provider as a backend. Don't mock the provider.
-  - Make sure to update `bin/server.js` to add the new endpoint.
+  - Make sure to update `bin/server.js` to add the new endpoint, including tenant middleware.
 
 ## Context: bin/server.js
 ## Output: src/endpoints/chat.js

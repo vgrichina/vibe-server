@@ -9,17 +9,13 @@ Generate comprehensive unit tests for the chat completions endpoint:
      - Verify response format matches OpenAI API structure.
 
   **Streaming Response**:
-     - Send `POST /v1/chat/completions` with `X-Tenant-Id: abc`, body: `{"messages": [{"role": "user", "content": "Hi"}], "stream": true, "group_id": "anonymous"}`.
+     - Send `POST /v1/chat/completions` with `X-Tenant-Id: abc`, body: `{"messages": [{"role": "user", "content": "Hi"}], "stream": true}`.
      - Assert SSE headers and stream contains chunks with delta content.
      - Verify each chunk follows OpenAI streaming format.
 
   **Non-Streaming Response**:
      - Send same request with `stream: false`.
      - Assert 200 status with `{"id": "job-123", "status": "queued", "eta": 2}`.
-
-  **Invalid Group**:
-     - Send with `group_id: "invalid"`.
-     - Assert 400 with `{"error": "Invalid group_id"}`.
 
   **Insufficient Tokens**:
      - Set `tokens:abc:anonymous:anonymous-uuid` to 0.
