@@ -11,4 +11,4 @@
 - Avoid `node-fetch` and use native `fetch` instead.
 - IMPORTANT: Use only real Redis for testing. Don't mock it.
 - Use `server.listen` without port or host to use a random port during tests.
-- Don't check constructor equality like `.toBeInstanceOf(Array)`. Just check the values.
+- Don't check constructor equality like `.toBeInstanceOf(Array)` or `.toEqual(expect.any(Array))`. Just check the values.

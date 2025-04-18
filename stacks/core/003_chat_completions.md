@@ -73,6 +73,8 @@ Add the `/:tenantId/v1/chat/completions` endpoint for text-based LLM interaction
   - Log `[INFO] Processing chat completion for <tenantId>:<jobId>` for each request
   - Support any OpenAI-compatible provider as a backend. Don't mock the provider.
   - Make sure to update `bin/server.js` to add the new endpoint, including tenant middleware.
+  - Don't forget to use tenant middleware to get the tenant ID from the request.
+  - Don't validate the model in the endpoint. That should be done by the backend provider.
 
 ## Context: bin/server.js
 ## Output: src/endpoints/chat.js

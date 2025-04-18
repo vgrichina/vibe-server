@@ -23,6 +23,7 @@ Generate comprehensive unit tests for the chat completions endpoint:
 
   **Missing API Key**:
      - Mock tenant config without `openai` key.
+     - Mock OpenAI API to return 403 when no API key is provided.
      - Assert 403 with `{"error": "No OpenAI API key configured"}`.
 
   **Rate Limiting**:
@@ -47,7 +48,10 @@ Generate comprehensive unit tests for the chat completions endpoint:
 
 - **Implementation Notes**:
   - Setup full tenant config in Redis pointing to mock OpenAI API.
-  - Include `Authorization` header in requests. Need to obtain API key from `POST /:tenantId/auth/anonymous`.
+  - Include `Authorization` header in requests:
+    - Need to obtain API key from `POST /:tenantId/auth/anonymous`.
+    - Obtain unique API key for each test to avoid conflicts with rate limiting, etc.
+
   - Mock OpenAI API calls by starting a mock server and setting up API URL to point to it.
   - Test both success and error paths.
   - Don't use `eventsource` module for SSE. Just use `fetch` and `getReader`. 
