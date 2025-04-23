@@ -25,7 +25,7 @@ Generate comprehensive unit tests for SSO integration:
       "remaining_tokens": 950
     }
     ```
-  - Verify Redis contains `apikey:vs_user_123456789abcdef` with user data
+  - Verify Redis contains `apiKey:vs_user_123456789abcdef` with user data
   - Check `[INFO] User authenticated for abc:user_123` log
 
 - **Invalid OAuth Token**:
@@ -88,7 +88,6 @@ Generate comprehensive unit tests for SSO integration:
 - Mock OAuth validation logic for Google and Apple
 - Mock Stripe API responses
 - Use test fixtures for tenant configurations
-- Clean up Redis after each test
 
-## Context: bin/server.js, src/endpoints/auth.js, src/auth.js, src/middleware/authenticate.js, tests/test_chat_completions.test.js
+## Context: bin/server.js, src/endpoints/auth.js, src/auth.js, tests/test_chat_completions.test.js
 ## Output: tests/test_sso.test.js

@@ -14,7 +14,7 @@ Add SSO integration for tenant-specific authentication:
   - Validate the OAuth token with Google's API
   - Retrieve user information (email, name, profile)
   - Generate API key with format `vs_user_[alphanumeric]`
-  - Store in Redis: `apikey:<api_key>` → `{tenantId, userId, email, group, expires_at}`
+  - Store in Redis: `apiKey:<api_key>` → `{tenantId, userId, email, group, expires_at}`
   - Return:
     ```json
     {
@@ -52,6 +52,38 @@ Add SSO integration for tenant-specific authentication:
   - Follow Apple-specific validation procedures
 - Map all providers to same user account if emails match
 
+## Tenant Configuration
+- Store OAuth provider configurations in tenant config:
+  ```json
+  {
+    "auth": {
+      "stripe": {
+        "api_key": "sk_test_abc123",
+        "api_url": "https://api.stripe.com/v1"
+      },
+      "google_oauth": {
+        "client_id": "google-client-abc",
+        "client_secret": "google-secret-abc",
+        "auth_url": "https://accounts.google.com/o/oauth2/v2/auth",
+        "token_url": "https://oauth2.googleapis.com/token",
+        "userinfo_url": "https://www.googleapis.com/oauth2/v1/userinfo"
+      },
+      "apple_oauth": {
+        "client_id": "apple-client-abc",
+        "client_secret": "apple-secret-abc",
+        "auth_url": "https://appleid.apple.com/auth/authorize",
+        "token_url": "https://appleid.apple.com/auth/token",
+        "keys_url": "https://appleid.apple.com/auth/keys"
+      }
+    }
+  }
+  ```
+
+- **URL Configuration**:
+  - All OAuth provider URLs are configurable per tenant
+  - Default to standard provider endpoints if not specified
+  - Enable mock server usage for testing by overriding URLs
+
 ## Stripe Subscription Integration
 - **Subscription Check**: On successful authentication, check user's subscription status
   - Use tenant's `auth.stripe.api_key` to query Stripe API
@@ -70,7 +102,6 @@ Add SSO integration for tenant-specific authentication:
   - 403: Insufficient permissions 
   - 429: Rate limit exceeded
 - Implement rate limiting for authentication attempts
-- Add CSRF protection for authentication flows
 
 ## Implementation Notes
 - Log `[INFO] User authenticated for <tenantId>:<userId>` on successful login
