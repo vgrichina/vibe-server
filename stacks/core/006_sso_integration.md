@@ -49,7 +49,34 @@ Add SSO integration for tenant-specific authentication:
 - Determine provider from request body `provider` field
 - For Apple OAuth:
   - Validate using tenant's `auth.apple_oauth.client_id` and `client_secret`
-  - Follow Apple-specific validation procedures
+  - Apple-specific validation procedures:
+    1. **JWT Token Validation**:
+       - Fetch Apple's public keys from `keys_url` endpoint
+       - Verify JWT signature using public key matching `kid` in header
+       - Validate standard JWT claims:
+         - `iss` must be "https://appleid.apple.com"
+         - `aud` must match your `client_id`
+         - `exp` timestamp must not be passed
+    
+    2. **Identity Token Processing**:
+       - Extract user info from identity token claims:
+         - `sub`: Unique user identifier (Apple User ID)
+         - `email`: User's email (if provided)
+         - `email_verified`: Boolean flag for email verification
+         - `is_private_email`: Check if using Apple's email relay service
+    
+    3. **First-time Login Handling**:
+       - Apple may provide additional user data only on first login:
+         - `given_name`: First name (optional)
+         - `family_name`: Last name (optional)
+       - Store these details when available as they won't be sent again
+    
+    4. **Email Relay Service**:
+       - Handle Apple's private email relay service
+       - Format: `unique-id@privaterelay.appleid.com`
+       - Store both real email (if provided) and relay email
+       - Update user profile if real email is later shared
+
 - Map all providers to same user account if emails match
 
 ## Tenant Configuration
@@ -80,9 +107,9 @@ Add SSO integration for tenant-specific authentication:
   ```
 
 - **URL Configuration**:
-  - All OAuth provider URLs are configurable per tenant
+  - IMPORTANT: All OAuth provider URLs should be configurable per tenant. Don't hardcode any URLs.
   - Default to standard provider endpoints if not specified
-  - Enable mock server usage for testing by overriding URLs
+  - Enable mock server usage for testing by overriding URLs in tenant config
 
 ## Stripe Subscription Integration
 - **Subscription Check**: On successful authentication, check user's subscription status
