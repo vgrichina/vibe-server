@@ -1,43 +1,46 @@
 /**
- * Cache utility functions for text responses
+ * Cache utilities for tenant-specific caching
  */
 
-// Get cache configuration from tenant config
+// Check if caching is enabled and get cache configuration for a tenant
 export const getCacheConfig = (tenantConfig) => {
-  return tenantConfig.caching || {
-    enabled: false,
-    text_ttl: 86400,      // Default: 1 day in seconds
-    transcription_ttl: 3600, // Default: 1 hour in seconds
-    fee_percentage: 20    // Default: 20% fee reduction for cached responses
+  if (!tenantConfig?.caching?.enabled) {
+    return null;
+  }
+  
+  return {
+    enabled: true,
+    text_ttl: tenantConfig.caching.text_ttl || 86400, // Default 24 hours
+    transcription_ttl: tenantConfig.caching.transcription_ttl || 3600, // Default 1 hour
+    fee_percentage: tenantConfig.caching.fee_percentage || 20 // Default 20%
   };
 };
 
-// Generate cache key
+// Generate a cache key based on tenantId and provided cache key
 export const generateCacheKey = (tenantId, cacheKey) => {
   return `cache:${tenantId}:${cacheKey}`;
 };
 
-// Check if a response is cached
-export const getCachedResponse = async (redisClient, tenantId, cacheKey) => {
+// Check if a response exists in cache
+export const getFromCache = async (redisClient, tenantId, cacheKey) => {
   if (!cacheKey) return null;
   
-  const key = generateCacheKey(tenantId, cacheKey);
-  const cachedResponse = await redisClient.get(key);
+  const fullCacheKey = generateCacheKey(tenantId, cacheKey);
+  const cachedResponse = await redisClient.get(fullCacheKey);
   
   if (cachedResponse) {
     console.log(`[INFO] Cache hit for ${cacheKey}`);
     return JSON.parse(cachedResponse);
   }
   
-  console.log(`[INFO] Cache miss for ${cacheKey}`);
   return null;
 };
 
-// Store response in cache
-export const cacheResponse = async (redisClient, tenantId, cacheKey, response, ttl) => {
+// Store a response in cache
+export const storeInCache = async (redisClient, tenantId, cacheKey, response, ttl) => {
   if (!cacheKey) return;
   
-  const key = generateCacheKey(tenantId, cacheKey);
-  await redisClient.setEx(key, ttl, JSON.stringify(response));
+  const fullCacheKey = generateCacheKey(tenantId, cacheKey);
+  await redisClient.setEx(fullCacheKey, ttl, JSON.stringify(response));
   console.log(`[INFO] Cache miss, stored ${cacheKey}`);
 };

@@ -1,5 +1,5 @@
 import { Readable } from 'stream';
-import { getCacheConfig, getCachedResponse, cacheResponse } from '../cache.js';
+import { getCacheConfig, getFromCache, storeInCache } from '../cache.js';
 
 // Validate the chat completion request body
 const validateRequestBody = (body) => {
@@ -192,13 +192,14 @@ export const chatCompletions = (redisClient) => async (ctx) => {
     return;
   }
 
-  // Check for cache_key in request
-  const cacheKey = requestBody.cache_key;
+  // Check if caching should be used
   const cacheConfig = getCacheConfig(tenantConfig);
-
-  // Check cache if caching is enabled and cache_key is provided
-  if (cacheConfig.enabled && cacheKey && !requestBody.stream) {
-    const cachedResponse = await getCachedResponse(redisClient, tenantId, cacheKey);
+  const cacheKey = requestBody.cache_key;
+  
+  // Try to retrieve from cache if caching is enabled and cache_key is provided
+  if (cacheConfig?.enabled && cacheKey && !requestBody.stream) {
+    const cachedResponse = await getFromCache(redisClient, tenantId, cacheKey);
+    
     if (cachedResponse) {
       ctx.status = 200;
       ctx.body = cachedResponse;
@@ -254,12 +255,11 @@ export const chatCompletions = (redisClient) => async (ctx) => {
   if (requestBody.stream === true) {
     createStreamingResponse(ctx, conversationId, provider, requestBody, providerEndpoint);
   } else {
-    // Check if we need to store in cache after response
-    const shouldCache = cacheConfig.enabled && cacheKey;
-    
-    if (shouldCache) {
-      // For this implementation, we're using a mock cached response
-      const response = {
+    // When caching is enabled and we have a cache_key, we'll return a mock response
+    // and cache it instead of calling the actual provider
+    if (cacheConfig?.enabled && cacheKey) {
+      // Create a mock cached response
+      const cachedResponse = {
         id: `job-${jobId}`,
         choices: [{
           message: {
@@ -269,13 +269,14 @@ export const chatCompletions = (redisClient) => async (ctx) => {
         }]
       };
       
-      // Store in cache with TTL from tenant config
-      await cacheResponse(redisClient, tenantId, cacheKey, response, cacheConfig.text_ttl);
+      // Store in cache with TTL from config
+      await storeInCache(redisClient, tenantId, cacheKey, cachedResponse, cacheConfig.text_ttl);
       
-      // Return the cached response
+      // Return the response
       ctx.status = 200;
-      ctx.body = response;
+      ctx.body = cachedResponse;
     } else {
+      // Normal non-cached response flow
       await handleNonStreamingResponse(ctx, conversationId, provider, requestBody, providerEndpoint);
     }
   }

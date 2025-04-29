@@ -3,10 +3,10 @@ import Router from 'koa-router';
 import bodyParser from 'koa-bodyparser';
 import { createClient } from 'redis';
 import { v4 as uuidv4 } from 'uuid';
-import websockify from 'koa-easy-ws';
+import ws from 'koa-easy-ws';
 import { chatCompletions } from '../src/endpoints/chat.js';
-import { initializeRealtime, handleWebSocketStream } from '../src/endpoints/realtime.js';
-import { googleAuth } from '../src/auth.js';
+import { initializeRealtimeSession, handleRealtimeStream } from '../src/endpoints/realtime.js';
+import { oauthLogin, refreshApiKey } from '../src/endpoints/auth.js';
 
 // Default configurations
 const PORT = process.env.PORT || 3000;
@@ -30,37 +30,54 @@ const createRedisClient = async () => {
 const DEFAULT_TENANT_CONFIG = {
   auth: {
     stripe: {
-      api_key: "sk_test_abc123"
+      api_key: "sk_test_abc123",
+      api_url: "https://api.stripe.com/v1"
     },
     google_oauth: {
       client_id: "google-client-abc",
-      client_secret: "google-secret-abc"
+      client_secret: "google-secret-abc",
+      auth_url: "https://accounts.google.com/o/oauth2/v2/auth",
+      token_url: "https://oauth2.googleapis.com/token",
+      userinfo_url: "https://www.googleapis.com/oauth2/v1/userinfo"
     },
     apple_oauth: {
       client_id: "apple-client-abc",
-      client_secret: "apple-secret-abc"
+      client_secret: "apple-secret-abc",
+      auth_url: "https://appleid.apple.com/auth/authorize",
+      token_url: "https://appleid.apple.com/auth/token",
+      keys_url: "https://appleid.apple.com/auth/keys"
     }
   },
   user_groups: {
     anonymous: {
       tokens: 100,
       rate_limit: 10,
-      rate_limit_window: 60
+      rate_limit_window: 60,
+      expiration_hours: 24
     },
     google_logged_in: {
       tokens: 1000,
       rate_limit: 50,
-      rate_limit_window: 60
+      rate_limit_window: 60,
+      expiration_hours: 72
+    },
+    apple_logged_in: {
+      tokens: 1000,
+      rate_limit: 50,
+      rate_limit_window: 60,
+      expiration_hours: 72
     },
     stripe_basic: {
       tokens: 5000,
       rate_limit: 100,
-      rate_limit_window: 60
+      rate_limit_window: 60,
+      expiration_hours: 168 // 7 days
     },
     stripe_premium: {
       tokens: 20000,
       rate_limit: 500,
-      rate_limit_window: 60
+      rate_limit_window: 60,
+      expiration_hours: 720 // 30 days
     }
   },
   providers: {
@@ -109,12 +126,6 @@ const setupInitialTenantConfig = async (redisClient) => {
     console.log(`[INFO] Created initial tenant config for ${tenantId}`);
   } else {
     console.log(`[INFO] Using existing tenant config for ${tenantId}`);
-  }
-  
-  // Setup initial token amount for demo
-  if (!await redisClient.get(`tenant:${tenantId}:tokens`)) {
-    await redisClient.set(`tenant:${tenantId}:tokens`, '100');
-    console.log(`[INFO] Set initial token balance for tenant ${tenantId}`);
   }
 };
 
@@ -199,9 +210,6 @@ export const createApp = async ({ redisClient }) => {
   const app = new Koa();
   const router = new Router();
   
-  // Add WebSocket support
-  app.use(websockify());
-  
   // Setup error handling
   app.use(async (ctx, next) => {
     try {
@@ -213,6 +221,9 @@ export const createApp = async ({ redisClient }) => {
     }
   });
   
+  // Add WebSocket support
+  app.use(ws());
+  
   // Use body parser
   app.use(bodyParser());
   
@@ -223,9 +234,6 @@ export const createApp = async ({ redisClient }) => {
     ctx.body = { message: "vibe-server API is running" };
   });
   
-  // Google OAuth endpoint
-  router.post('/auth/google', googleAuth(redisClient));
-  
   // Anonymous login endpoint
   router.post('/:tenantId/auth/anonymous', tenantMiddleware(redisClient), async (ctx) => {
     const { tenantId, tenantConfig } = ctx.state;
@@ -233,6 +241,12 @@ export const createApp = async ({ redisClient }) => {
     ctx.status = 200;
     ctx.body = userData;
   });
+  
+  // OAuth login endpoint
+  router.post('/:tenantId/auth/login', tenantMiddleware(redisClient), oauthLogin(redisClient));
+  
+  // API key refresh endpoint
+  router.post('/:tenantId/auth/refresh', tenantMiddleware(redisClient), refreshApiKey(redisClient));
   
   // Get tenant config (admin)
   router.get('/:tenantId/admin/config', 
@@ -276,9 +290,9 @@ export const createApp = async ({ redisClient }) => {
     chatCompletions(redisClient)
   );
   
-  // Realtime endpoints
-  router.post('/v1/realtime/initialize', initializeRealtime(redisClient));
-  router.get('/v1/realtime/stream', handleWebSocketStream(redisClient));
+  // Realtime API endpoints
+  router.post('/v1/realtime/initialize', initializeRealtimeSession(redisClient));
+  router.get('/v1/realtime/stream', handleRealtimeStream(ws, redisClient));
   
   app.use(router.routes());
   app.use(router.allowedMethods());

@@ -3,9 +3,9 @@ import Router from 'koa-router';
 import bodyParser from 'koa-bodyparser';
 import { createClient } from 'redis';
 import { v4 as uuidv4 } from 'uuid';
-import websockify from 'koa-easy-ws';
+import ws from 'koa-easy-ws';
 import { chatCompletions } from '../src/endpoints/chat.js';
-import { initializeRealtime, handleWebSocketStream } from '../src/endpoints/realtime.js';
+import { initializeRealtimeSession, handleRealtimeStream } from '../src/endpoints/realtime.js';
 
 // Default configurations
 const PORT = process.env.PORT || 3000;
@@ -109,12 +109,6 @@ const setupInitialTenantConfig = async (redisClient) => {
   } else {
     console.log(`[INFO] Using existing tenant config for ${tenantId}`);
   }
-  
-  // Setup initial token amount for demo
-  if (!await redisClient.get(`tenant:${tenantId}:tokens`)) {
-    await redisClient.set(`tenant:${tenantId}:tokens`, '100');
-    console.log(`[INFO] Set initial token balance for tenant ${tenantId}`);
-  }
 };
 
 // Middleware to verify and load tenant config
@@ -198,9 +192,6 @@ export const createApp = async ({ redisClient }) => {
   const app = new Koa();
   const router = new Router();
   
-  // Add WebSocket support
-  app.use(websockify());
-  
   // Setup error handling
   app.use(async (ctx, next) => {
     try {
@@ -211,6 +202,9 @@ export const createApp = async ({ redisClient }) => {
       ctx.body = { error: "Internal Server Error" };
     }
   });
+  
+  // Add WebSocket support
+  app.use(ws());
   
   // Use body parser
   app.use(bodyParser());
@@ -272,9 +266,9 @@ export const createApp = async ({ redisClient }) => {
     chatCompletions(redisClient)
   );
   
-  // Realtime endpoints
-  router.post('/v1/realtime/initialize', initializeRealtime(redisClient));
-  router.get('/v1/realtime/stream', handleWebSocketStream(redisClient));
+  // Realtime API endpoints
+  router.post('/v1/realtime/initialize', initializeRealtimeSession(redisClient));
+  router.get('/v1/realtime/stream', handleRealtimeStream(ws, redisClient));
   
   app.use(router.routes());
   app.use(router.allowedMethods());
