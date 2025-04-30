@@ -1,5 +1,4 @@
 {
   "stacks": ["core", "tests"],
-  "output": ".",
   "testCmd": "npm run test"
 }
