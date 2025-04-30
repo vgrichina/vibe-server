@@ -6,7 +6,8 @@ import { v4 as uuidv4 } from 'uuid';
 import ws from 'koa-easy-ws';
 import { chatCompletions } from '../src/endpoints/chat.js';
 import { initializeRealtimeSession, handleRealtimeStream } from '../src/endpoints/realtime.js';
-import { oauthLogin, refreshApiKey } from '../src/endpoints/auth.js';
+// PROMPT: Add SSO integration for tenant-specific authentication
+import { loginWithOAuth, refreshApiKey } from '../src/endpoints/auth.js';
 
 // Default configurations
 const PORT = process.env.PORT || 3000;
@@ -33,6 +34,7 @@ const DEFAULT_TENANT_CONFIG = {
       api_key: "sk_test_abc123",
       api_url: "https://api.stripe.com/v1"
     },
+    // PROMPT: Store OAuth provider configurations in tenant config
     google_oauth: {
       client_id: "google-client-abc",
       client_secret: "google-secret-abc",
@@ -52,32 +54,22 @@ const DEFAULT_TENANT_CONFIG = {
     anonymous: {
       tokens: 100,
       rate_limit: 10,
-      rate_limit_window: 60,
-      expiration_hours: 24
+      rate_limit_window: 60
     },
     google_logged_in: {
       tokens: 1000,
       rate_limit: 50,
-      rate_limit_window: 60,
-      expiration_hours: 72
-    },
-    apple_logged_in: {
-      tokens: 1000,
-      rate_limit: 50,
-      rate_limit_window: 60,
-      expiration_hours: 72
+      rate_limit_window: 60
     },
     stripe_basic: {
       tokens: 5000,
       rate_limit: 100,
-      rate_limit_window: 60,
-      expiration_hours: 168 // 7 days
+      rate_limit_window: 60
     },
     stripe_premium: {
       tokens: 20000,
       rate_limit: 500,
-      rate_limit_window: 60,
-      expiration_hours: 720 // 30 days
+      rate_limit_window: 60
     }
   },
   providers: {
@@ -241,12 +233,18 @@ export const createApp = async ({ redisClient }) => {
     ctx.status = 200;
     ctx.body = userData;
   });
+
+  // PROMPT: OAuth Authentication Endpoint: `POST /:tenantId/auth/login`
+  router.post('/:tenantId/auth/login', 
+    tenantMiddleware(redisClient),
+    loginWithOAuth(redisClient)
+  );
   
-  // OAuth login endpoint
-  router.post('/:tenantId/auth/login', tenantMiddleware(redisClient), oauthLogin(redisClient));
-  
-  // API key refresh endpoint
-  router.post('/:tenantId/auth/refresh', tenantMiddleware(redisClient), refreshApiKey(redisClient));
+  // PROMPT: API Key Refresh Endpoint: `POST /:tenantId/auth/refresh`
+  router.post('/:tenantId/auth/refresh', 
+    tenantMiddleware(redisClient),
+    refreshApiKey(redisClient)
+  );
   
   // Get tenant config (admin)
   router.get('/:tenantId/admin/config', 

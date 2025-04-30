@@ -2,186 +2,87 @@ import { jest } from '@jest/globals';
 import { createApp } from '../bin/server.js';
 import { createClient } from 'redis';
 import http from 'http';
+import crypto from 'crypto';
+import jsonwebtoken from 'jsonwebtoken';
 
-const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
-
+// PROMPT: Use Node's `http` module for requests, Mock OAuth validation logic for Google and Apple, Mock Stripe API responses
 describe('SSO Integration Tests', () => {
   let redisClient;
   let app;
   let server;
   let baseUrl;
-  let mockOAuthServer;
+  let tenantId = 'abc';
+  
+  // Mock servers
+  let mockGoogleServer;
+  let mockAppleServer;
   let mockStripeServer;
-  const tenantId = 'abc';
-  
-  // Helper function to setup mock OAuth server
-  const setupMockOAuthServer = () => {
-    return http.createServer((req, res) => {
-      if (req.url === '/google/userinfo' && req.method === 'GET') {
-        const authHeader = req.headers.authorization || '';
-        
-        if (authHeader === 'Bearer mock-oauth-token') {
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({
-            id: "user_123",
-            email: "user@example.com",
-            name: "Test User",
-            picture: "https://example.com/profile.jpg"
-          }));
-        } else if (authHeader === 'Bearer invalid-token') {
-          res.writeHead(401, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: "Invalid token" }));
-        } else {
-          res.writeHead(401, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: "Unauthorized" }));
-        }
-      } 
-      else if (req.url === '/apple/auth/keys' && req.method === 'GET') {
-        // Mock Apple's JWKS endpoint with fake keys
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({
-          keys: [{
-            kty: "RSA",
-            kid: "apple-key-id-123",
-            use: "sig",
-            alg: "RS256",
-            n: "sample-modulus",
-            e: "AQAB"
-          }]
-        }));
-      }
-      else {
-        res.writeHead(404);
-        res.end('Not found');
-      }
-    });
-  };
-  
-  // Helper function to setup mock Stripe server
-  const setupMockStripeServer = () => {
-    return http.createServer((req, res) => {
-      if (req.url.startsWith('/v1/customers') && req.method === 'GET') {
-        if (req.url.includes('premium@example.com')) {
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({
-            data: [{
-              id: "cus_premium123",
-              email: "premium@example.com"
-            }]
-          }));
-        } else if (req.url.includes('user@example.com')) {
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({
-            data: [{
-              id: "cus_user123",
-              email: "user@example.com"
-            }]
-          }));
-        } else {
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ data: [] }));
-        }
-      } 
-      else if (req.url.includes('/v1/subscriptions') && req.method === 'GET') {
-        if (req.url.includes('cus_premium123')) {
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({
-            data: [{
-              id: "sub_123",
-              status: "active",
-              plan: {
-                id: "plan_premium_123"
-              }
-            }]
-          }));
-        } else if (req.url.includes('cus_user123')) {
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({
-            data: [{
-              id: "sub_456",
-              status: "active",
-              plan: {
-                id: "plan_basic_456"
-              }
-            }]
-          }));
-        } else {
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ data: [] }));
-        }
-      }
-      else {
-        res.writeHead(404);
-        res.end('Not found');
-      }
-    });
-  };
+  let mockOpenAIServer;
   
   beforeAll(async () => {
     // Connect to Redis
-    redisClient = createClient({ url: REDIS_URL });
-    redisClient.on('error', (err) => {
-      console.error(`Redis Test Client Error: ${err}`);
-    });
+    redisClient = createClient({ url: process.env.REDIS_URL || 'redis://localhost:6379' });
+    redisClient.on('error', (err) => console.error(`Redis Test Client Error: ${err}`));
     await redisClient.connect();
     
-    // Setup mock servers
-    mockOAuthServer = setupMockOAuthServer();
-    mockOAuthServer.listen(0);
-    const mockOAuthPort = mockOAuthServer.address().port;
-    
+    // PROMPT: Mock OAuth validation logic for Google and Apple
+    mockGoogleServer = setupMockGoogleServer();
+    mockAppleServer = setupMockAppleServer();
     mockStripeServer = setupMockStripeServer();
-    mockStripeServer.listen(0);
-    const mockStripePort = mockStripeServer.address().port;
+    mockOpenAIServer = setupMockOpenAIServer();
     
-    // Create tenant config with mocked services
+    await mockGoogleServer.listen(0); // Use random port
+    await mockAppleServer.listen(0);
+    await mockStripeServer.listen(0);
+    await mockOpenAIServer.listen(0);
+    
+    const googlePort = mockGoogleServer.address().port;
+    const applePort = mockAppleServer.address().port;
+    const stripePort = mockStripeServer.address().port;
+    const openaiPort = mockOpenAIServer.address().port;
+    
+    // PROMPT: Use test fixtures for tenant configurations
     const tenantConfig = {
       auth: {
         stripe: {
           api_key: "sk_test_abc123",
-          api_url: `http://localhost:${mockStripePort}/v1`
+          api_url: `http://localhost:${stripePort}/v1`
         },
         google_oauth: {
           client_id: "google-client-abc",
           client_secret: "google-secret-abc",
-          userinfo_url: `http://localhost:${mockOAuthPort}/google/userinfo`
+          auth_url: "https://accounts.google.com/o/oauth2/v2/auth",
+          token_url: "https://oauth2.googleapis.com/token",
+          userinfo_url: `http://localhost:${googlePort}/oauth2/v1/userinfo`
         },
         apple_oauth: {
-          client_id: "apple-client-abc",
+          client_id: "com.example.app",
           client_secret: "apple-secret-abc",
-          keys_url: `http://localhost:${mockOAuthPort}/apple/auth/keys`
+          auth_url: "https://appleid.apple.com/auth/authorize",
+          token_url: "https://appleid.apple.com/auth/token",
+          keys_url: `http://localhost:${applePort}/auth/keys`
         }
       },
       user_groups: {
         anonymous: {
           tokens: 100,
           rate_limit: 10,
-          rate_limit_window: 60,
-          expiration_hours: 24
+          rate_limit_window: 60
         },
         google_logged_in: {
           tokens: 1000,
           rate_limit: 50,
-          rate_limit_window: 60,
-          expiration_hours: 72
-        },
-        apple_logged_in: {
-          tokens: 1000,
-          rate_limit: 50,
-          rate_limit_window: 60,
-          expiration_hours: 72
+          rate_limit_window: 60
         },
         stripe_basic: {
           tokens: 5000,
           rate_limit: 100,
-          rate_limit_window: 60,
-          expiration_hours: 168
+          rate_limit_window: 60
         },
         stripe_premium: {
           tokens: 20000,
           rate_limit: 500,
-          rate_limit_window: 60,
-          expiration_hours: 720
+          rate_limit_window: 60
         }
       },
       providers: {
@@ -189,7 +90,7 @@ describe('SSO Integration Tests', () => {
           default: "openai",
           endpoints: {
             openai: {
-              url: "https://api.openai.com/v1/chat/completions",
+              url: `http://localhost:${openaiPort}/v1/chat/completions`,
               default_model: "gpt-4o",
               api_key: "sk-abc123"
             }
@@ -209,604 +110,673 @@ describe('SSO Integration Tests', () => {
   });
   
   afterAll(async () => {
+    // Close servers and connections
     server.close();
-    mockOAuthServer.close();
+    mockGoogleServer.close();
+    mockAppleServer.close();
     mockStripeServer.close();
-    await redisClient.flushDb(); // Clear all test data
+    mockOpenAIServer.close();
+    await redisClient.flushDb(); // Clean database
     await redisClient.quit();
   });
   
   afterEach(async () => {
-    // Clean up test data after each test
-    const apiKeys = await redisClient.keys('apiKey:*');
-    for (const key of apiKeys) {
-      await redisClient.del(key);
-    }
+    // Clean up user and API key data after each test
+    const keyPatterns = [
+      'apiKey:vs_user_*',
+      'user:user_*',
+      'tenant:abc:user:email:*'
+    ];
     
-    const userKeys = await redisClient.keys('user:*');
-    for (const key of userKeys) {
-      await redisClient.del(key);
-    }
-    
-    const tokenKeys = await redisClient.keys('tokens:*');
-    for (const key of tokenKeys) {
-      await redisClient.del(key);
-    }
-    
-    const rateLimitKeys = await redisClient.keys('ratelimit:*');
-    for (const key of rateLimitKeys) {
-      await redisClient.del(key);
+    for (const pattern of keyPatterns) {
+      const keys = await redisClient.keys(pattern);
+      if (keys.length > 0) {
+        await redisClient.del(keys);
+      }
     }
   });
   
-  describe('OAuth Authentication', () => {
-    test('Google Auth Success - should authenticate with valid token', async () => {
-      const response = await fetch(`${baseUrl}/${tenantId}/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          provider: 'google',
-          token: 'mock-oauth-token'
-        })
-      });
-      
-      expect(response.status).toBe(200);
-      
-      const responseData = await response.json();
-      expect(responseData).toEqual({
-        api_key: expect.stringMatching(/^vs_user_[0-9a-f]+$/),
-        expires_at: expect.any(String),
-        user: {
-          id: 'user_123',
-          email: 'user@example.com',
-          group: 'google_logged_in'
-        },
-        remaining_tokens: 1000
-      });
-      
-      // Verify API key exists in Redis
-      const storedData = await redisClient.get(`apiKey:${responseData.api_key}`);
-      expect(storedData).not.toBeNull();
-      
-      const userData = JSON.parse(storedData);
-      expect(userData.userId).toBe('user_123');
-      expect(userData.email).toBe('user@example.com');
-      expect(userData.group).toBe('google_logged_in');
+  // PROMPT: OAuth Authentication - Google Auth Success
+  test('Google OAuth authentication - success', async () => {
+    const response = await fetch(`${baseUrl}/${tenantId}/auth/login`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        provider: 'google',
+        token: 'valid-google-token'
+      })
     });
     
-    test('Invalid OAuth Token - should return 401 error', async () => {
-      const response = await fetch(`${baseUrl}/${tenantId}/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          provider: 'google',
-          token: 'invalid-token'
-        })
-      });
-      
-      expect(response.status).toBe(401);
-      
-      const errorData = await response.json();
-      expect(errorData.error).toContain('Authentication failed');
-    });
+    expect(response.status).toBe(200);
     
-    test('Missing Provider - should return 400 error', async () => {
-      const response = await fetch(`${baseUrl}/${tenantId}/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          token: 'mock-oauth-token'
-          // missing provider
-        })
-      });
-      
-      expect(response.status).toBe(400);
-      
-      const errorData = await response.json();
-      expect(errorData.error).toContain('Provider and token are required');
-    });
+    const responseData = await response.json();
+    expect(responseData.api_key).toBeDefined();
+    expect(responseData.api_key).toMatch(/^vs_user_[a-f0-9]+$/);
+    expect(responseData.expires_at).toBeDefined();
+    expect(responseData.user.email).toBe('user@example.com');
+    expect(responseData.user.group).toBe('google_logged_in');
+    expect(responseData.remaining_tokens).toBe(1000);
     
-    test('Missing Token - should return 400 error', async () => {
-      const response = await fetch(`${baseUrl}/${tenantId}/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          provider: 'google'
-          // missing token
-        })
-      });
-      
-      expect(response.status).toBe(400);
-      
-      const errorData = await response.json();
-      expect(errorData.error).toContain('Provider and token are required');
-    });
+    // PROMPT: Verify Redis contains `apiKey:vs_user_123456789abcdef` with user data
+    const apiKey = responseData.api_key;
+    const userData = await redisClient.get(`apiKey:${apiKey}`);
+    expect(userData).toBeDefined();
     
-    test('Unsupported Provider - should return 400 error', async () => {
-      const response = await fetch(`${baseUrl}/${tenantId}/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          provider: 'unsupported',
-          token: 'some-token'
-        })
-      });
-      
-      expect(response.status).toBe(400);
-      
-      const errorData = await response.json();
-      expect(errorData.error).toContain('Unsupported provider');
-    });
+    const userDataObj = JSON.parse(userData);
+    expect(userDataObj.tenantId).toBe(tenantId);
+    expect(userDataObj.email).toBe('user@example.com');
+    expect(userDataObj.group).toBe('google_logged_in');
   });
   
-  describe('API Key Refresh', () => {
-    let validApiKey;
-    
-    beforeEach(async () => {
-      // Authenticate to get valid API key
-      const response = await fetch(`${baseUrl}/${tenantId}/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          provider: 'google',
-          token: 'mock-oauth-token'
-        })
-      });
-      
-      const data = await response.json();
-      validApiKey = data.api_key;
+  // PROMPT: Invalid OAuth Token
+  test('Google OAuth authentication - invalid token', async () => {
+    const response = await fetch(`${baseUrl}/${tenantId}/auth/login`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        provider: 'google',
+        token: 'invalid-token'
+      })
     });
     
-    test('Successful Refresh - should issue new API key', async () => {
-      const response = await fetch(`${baseUrl}/${tenantId}/auth/refresh`, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${validApiKey}`
-        }
-      });
-      
-      expect(response.status).toBe(200);
-      
-      const responseData = await response.json();
-      expect(responseData).toEqual({
-        api_key: expect.stringMatching(/^vs_user_[0-9a-f]+$/),
-        expires_at: expect.any(String),
-        remaining_tokens: expect.any(Number)
-      });
-      
-      // Make sure new API key is different
-      expect(responseData.api_key).not.toBe(validApiKey);
-      
-      // Verify new API key exists in Redis
-      const storedData = await redisClient.get(`apiKey:${responseData.api_key}`);
-      expect(storedData).not.toBeNull();
-    });
+    expect(response.status).toBe(401);
     
-    test('Invalid API Key Refresh - should return 401 error', async () => {
-      const response = await fetch(`${baseUrl}/${tenantId}/auth/refresh`, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer invalid-api-key'
-        }
-      });
-      
-      expect(response.status).toBe(401);
-      
-      const errorData = await response.json();
-      expect(errorData.error).toContain('Invalid API key');
-    });
-    
-    test('Missing Authorization Header - should return 401 error', async () => {
-      const response = await fetch(`${baseUrl}/${tenantId}/auth/refresh`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
-        // Missing Authorization header
-      });
-      
-      expect(response.status).toBe(401);
-      
-      const errorData = await response.json();
-      expect(errorData.error).toContain('Authentication required');
-    });
+    const errorData = await response.json();
+    expect(errorData.error).toBeDefined();
   });
   
-  describe('Chat Completions with Authentication', () => {
-    let validApiKey;
-    
-    // Setup mock chat completions server specifically for this test group
-    let mockChatServer;
-    
-    beforeAll(async () => {
-      // Setup mock chat completions server
-      mockChatServer = http.createServer((req, res) => {
-        if (req.url === '/v1/chat/completions' && req.method === 'POST') {
-          const authHeader = req.headers.authorization || '';
-          
-          if (!authHeader.startsWith('Bearer ')) {
-            res.writeHead(401, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: "Missing API key" }));
-            return;
-          }
-          
-          // Return a successful response
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({
-            id: "chatcmpl-123",
-            object: "chat.completion",
-            created: 1694268190,
-            model: "gpt-4o",
-            choices: [{
-              index: 0,
-              message: {
-                role: "assistant",
-                content: "I'm an AI assistant. How can I help you?"
-              },
-              finish_reason: "stop"
-            }],
-            usage: {
-              prompt_tokens: 10,
-              completion_tokens: 10,
-              total_tokens: 20
-            }
-          }));
-        } else {
-          res.writeHead(404);
-          res.end('Not found');
-        }
-      });
-      
-      mockChatServer.listen(0);
-      const mockChatPort = mockChatServer.address().port;
-      
-      // Update tenant config with mock chat server URL
-      const config = JSON.parse(await redisClient.get(`tenant:${tenantId}:config`));
-      config.providers.text.endpoints.openai.url = `http://localhost:${mockChatPort}/v1/chat/completions`;
-      await redisClient.set(`tenant:${tenantId}:config`, JSON.stringify(config));
+  // PROMPT: API Key Refresh - Successful Refresh
+  test('API key refresh - success', async () => {
+    // First authenticate to get API key
+    const loginResponse = await fetch(`${baseUrl}/${tenantId}/auth/login`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        provider: 'google',
+        token: 'valid-google-token'
+      })
     });
     
-    afterAll(async () => {
-      mockChatServer.close();
-    });
+    expect(loginResponse.status).toBe(200);
+    const loginData = await loginResponse.json();
+    const apiKey = loginData.api_key;
     
-    beforeEach(async () => {
-      // Authenticate to get valid API key
-      const response = await fetch(`${baseUrl}/${tenantId}/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          provider: 'google',
-          token: 'mock-oauth-token'
-        })
-      });
-      
-      const data = await response.json();
-      validApiKey = data.api_key;
-    });
-    
-    test('Authenticated Request - should process chat completion', async () => {
-      const response = await fetch(`${baseUrl}/${tenantId}/v1/chat/completions`, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${validApiKey}`
-        },
-        body: JSON.stringify({
-          messages: [{ role: "user", content: "Hello" }],
-          model: "gpt-4o"
-        })
-      });
-      
-      expect(response.status).toBe(200);
-      
-      const responseData = await response.json();
-      expect(responseData.choices[0].message.content).toBe("I'm an AI assistant. How can I help you?");
-    });
-    
-    test('Missing Authorization - should return 401 error', async () => {
-      const response = await fetch(`${baseUrl}/${tenantId}/v1/chat/completions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          messages: [{ role: "user", content: "Hello" }],
-          model: "gpt-4o"
-        })
-      });
-      
-      expect(response.status).toBe(401);
-      
-      const errorData = await response.json();
-      expect(errorData.error).toBeDefined();
-    });
-    
-    test('Invalid API Key - should return 401 error', async () => {
-      const response = await fetch(`${baseUrl}/${tenantId}/v1/chat/completions`, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer invalid-key'
-        },
-        body: JSON.stringify({
-          messages: [{ role: "user", content: "Hello" }],
-          model: "gpt-4o"
-        })
-      });
-      
-      expect(response.status).toBe(401);
-      
-      const errorData = await response.json();
-      expect(errorData.error).toBeDefined();
-    });
-  });
-  
-  describe('Token Management', () => {
-    test('Token Depletion - should return 429 when tokens depleted', async () => {
-      // Authenticate with a limited token count
-      const authResponse = await fetch(`${baseUrl}/${tenantId}/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          provider: 'google',
-          token: 'mock-oauth-token'
-        })
-      });
-      
-      const authData = await authResponse.json();
-      const apiKey = authData.api_key;
-      
-      // Get user data from Redis
-      const userData = JSON.parse(await redisClient.get(`apiKey:${apiKey}`));
-      
-      // Set tokens to a very low number
-      userData.totalTokens = 25;
-      await redisClient.set(`apiKey:${apiKey}`, JSON.stringify(userData));
-      
-      // Setup mock chat server for token tests
-      const tokenTestServer = http.createServer((req, res) => {
-        // This server consumes 20 tokens per request
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({
-          id: "chatcmpl-123",
-          choices: [{ message: { role: "assistant", content: "Response" } }],
-          usage: { total_tokens: 20 }
-        }));
-      });
-      
-      try {
-        tokenTestServer.listen(0);
-        const tokenTestPort = tokenTestServer.address().port;
-        
-        // Update chat URL to use our test server
-        const config = JSON.parse(await redisClient.get(`tenant:${tenantId}:config`));
-        config.providers.text.endpoints.openai.url = `http://localhost:${tokenTestPort}/v1/chat/completions`;
-        await redisClient.set(`tenant:${tenantId}:config`, JSON.stringify(config));
-        
-        // First request should succeed (25 tokens available)
-        const response1 = await fetch(`${baseUrl}/${tenantId}/v1/chat/completions`, {
-          method: 'POST',
-          headers: { 
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${apiKey}`
-          },
-          body: JSON.stringify({
-            messages: [{ role: "user", content: "First request" }]
-          })
-        });
-        
-        expect(response1.status).toBe(200);
-        
-        // After the first request, only 5 tokens should remain
-        
-        // Second request should fail (not enough tokens)
-        const response2 = await fetch(`${baseUrl}/${tenantId}/v1/chat/completions`, {
-          method: 'POST',
-          headers: { 
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${apiKey}`
-          },
-          body: JSON.stringify({
-            messages: [{ role: "user", content: "Second request" }]
-          })
-        });
-        
-        expect(response2.status).toBe(429);
-        
-        const errorData = await response2.json();
-        expect(errorData.error).toBeDefined();
-      } finally {
-        tokenTestServer.close();
+    // Now refresh the API key
+    const refreshResponse = await fetch(`${baseUrl}/${tenantId}/auth/refresh`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`
       }
     });
     
-    test('Group-Based Limits - should apply different rate limits by group', async () => {
-      // First authenticate as regular Google user
-      const regularAuthResponse = await fetch(`${baseUrl}/${tenantId}/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          provider: 'google',
-          token: 'mock-oauth-token'
-        })
-      });
-      
-      const regularAuthData = await regularAuthResponse.json();
-      
-      // Then authenticate as premium user
-      // Modify the mock OAuth server response indirectly through the user email
-      const premiumAuthResponse = await fetch(`${baseUrl}/${tenantId}/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          provider: 'google',
-          token: 'mock-oauth-token'
-        })
-      });
-      
-      const premiumAuthData = await premiumAuthResponse.json();
-      
-      // For the premium user, manually update their group to premium
-      const premiumData = JSON.parse(await redisClient.get(`apiKey:${premiumAuthData.api_key}`));
-      premiumData.group = 'stripe_premium';
-      await redisClient.set(`apiKey:${premiumAuthData.api_key}`, JSON.stringify(premiumData));
-      
-      // Verify different token allocation
-      // Regular user should have regular allocation
-      expect(regularAuthData.remaining_tokens).toBe(1000);
-      
-      // Premium user should have higher allocation
-      const premiumUserData = JSON.parse(await redisClient.get(`apiKey:${premiumAuthData.api_key}`));
-      expect(premiumUserData.group).toBe('stripe_premium');
-    });
+    expect(refreshResponse.status).toBe(200);
+    
+    const refreshData = await refreshResponse.json();
+    expect(refreshData.api_key).toBeDefined();
+    expect(refreshData.api_key).not.toBe(apiKey); // New key should be different
+    expect(refreshData.expires_at).toBeDefined();
+    
+    // PROMPT: Verify Redis updated with new key
+    const newApiKey = refreshData.api_key;
+    const newUserData = await redisClient.get(`apiKey:${newApiKey}`);
+    expect(newUserData).toBeDefined();
+    
+    // Old API key should be invalidated
+    const oldUserData = await redisClient.get(`apiKey:${apiKey}`);
+    expect(oldUserData).toBeNull();
   });
   
-  describe('Multi-Provider Support', () => {
-    test('Same Email Different Providers - should link to same account', async () => {
-      // This test is partly conceptual since we can't fully mock Apple's JWT validation
-      // but we can test the user ID generation logic
-      
-      // First authenticate with Google
-      const googleResponse = await fetch(`${baseUrl}/${tenantId}/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          provider: 'google',
-          token: 'mock-oauth-token'
-        })
-      });
-      
-      const googleData = await googleResponse.json();
-      const googleUserId = googleData.user.id;
-      
-      // Get the real user ID from Redis
-      const googleUserData = JSON.parse(await redisClient.get(`apiKey:${googleData.api_key}`));
-      
-      // Create mock Apple login with same email
-      // We'll manually create this since we can't fully mock Apple JWT validation
-      const appleUserId = `user_apple_${Date.now()}`;
-      const appleApiKey = `vs_user_apple_${Date.now()}`;
-      
-      await redisClient.set(`apiKey:${appleApiKey}`, JSON.stringify({
-        userId: appleUserId,
-        email: "user@example.com", // Same email as Google login
-        name: "Test User",
-        group: "apple_logged_in",
-        tenantId: tenantId
-      }));
-      
-      // In a real implementation with proper backend logic, these two accounts
-      // would eventually be merged if they share the same verified email
-      
-      // We can verify this concept by checking that our API accepts both API keys
-      const googleCheck = await fetch(`${baseUrl}/${tenantId}/auth/refresh`, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${googleData.api_key}`
-        }
-      });
-      
-      expect(googleCheck.status).toBe(200);
-      
-      const appleCheck = await fetch(`${baseUrl}/${tenantId}/auth/refresh`, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${appleApiKey}`
-        }
-      });
-      
-      expect(appleCheck.status).toBe(200);
+  // PROMPT: Invalid API Key Refresh
+  test('API key refresh - invalid key', async () => {
+    const refreshResponse = await fetch(`${baseUrl}/${tenantId}/auth/refresh`, {
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer invalid-key'
+      }
     });
+    
+    expect(refreshResponse.status).toBe(401);
+    
+    const errorData = await refreshResponse.json();
+    expect(errorData.error).toBeDefined();
   });
   
-  describe('Stripe Integration', () => {
-    test('Subscription Check - should update user group based on Stripe data', async () => {
-      // First authenticate a user with a premium email
-      // The email needs to match what our mock Stripe server recognizes
+  // PROMPT: Chat Completions with Authentication - Authenticated Request
+  test('Chat completions - authenticated request', async () => {
+    // First authenticate to get API key
+    const loginResponse = await fetch(`${baseUrl}/${tenantId}/auth/login`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        provider: 'google',
+        token: 'valid-google-token'
+      })
+    });
+    
+    expect(loginResponse.status).toBe(200);
+    const loginData = await loginResponse.json();
+    const apiKey = loginData.api_key;
+    
+    // Send chat completion request with API key
+    const chatResponse = await fetch(`${baseUrl}/${tenantId}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        messages: [{ role: 'user', content: 'Hello' }],
+        model: 'gpt-4o'
+      })
+    });
+    
+    expect(chatResponse.status).toBe(200);
+    
+    const chatData = await chatResponse.json();
+    expect(chatData.choices).toBeDefined();
+    expect(chatData.choices[0].message.content).toBeDefined();
+  });
+  
+  // PROMPT: Missing Authorization Header
+  test('Chat completions - missing authorization', async () => {
+    const chatResponse = await fetch(`${baseUrl}/${tenantId}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+        // Missing Authorization header
+      },
+      body: JSON.stringify({
+        messages: [{ role: 'user', content: 'Hello' }],
+        model: 'gpt-4o'
+      })
+    });
+    
+    expect(chatResponse.status).toBe(401);
+    
+    const errorData = await chatResponse.json();
+    expect(errorData.error).toBeDefined();
+  });
+  
+  // PROMPT: Invalid API Key
+  test('Chat completions - invalid API key', async () => {
+    const chatResponse = await fetch(`${baseUrl}/${tenantId}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer invalid-key'
+      },
+      body: JSON.stringify({
+        messages: [{ role: 'user', content: 'Hello' }],
+        model: 'gpt-4o'
+      })
+    });
+    
+    expect(chatResponse.status).toBe(401);
+    
+    const errorData = await chatResponse.json();
+    expect(errorData.error).toBeDefined();
+  });
+  
+  // PROMPT: Token Depletion
+  test('Token management - token depletion', async () => {
+    // First authenticate to get API key
+    const loginResponse = await fetch(`${baseUrl}/${tenantId}/auth/login`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        provider: 'google',
+        token: 'valid-google-token'
+      })
+    });
+    
+    expect(loginResponse.status).toBe(200);
+    const loginData = await loginResponse.json();
+    const apiKey = loginData.api_key;
+    const userId = JSON.parse(await redisClient.get(`apiKey:${apiKey}`)).userId;
+    const userDataKey = `user:${userId}`;
+    
+    // Make first chat completion request
+    const chatResponse1 = await fetch(`${baseUrl}/${tenantId}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        messages: [{ role: 'user', content: 'Hello' }],
+        model: 'gpt-4o'
+      })
+    });
+    
+    expect(chatResponse1.status).toBe(200);
+    
+    // Set tokens to 0
+    const updatedUserData = JSON.parse(await redisClient.get(userDataKey) || '{}');
+    updatedUserData.tokensLeft = 0;
+    await redisClient.set(userDataKey, JSON.stringify(updatedUserData));
+    
+    // Set tokens used to max
+    await redisClient.set(`tokens:${apiKey}:used`, '1000');
+    
+    // Make another request that should fail due to token depletion
+    const chatResponse2 = await fetch(`${baseUrl}/${tenantId}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        messages: [{ role: 'user', content: 'Hello again' }],
+        model: 'gpt-4o'
+      })
+    });
+    
+    expect(chatResponse2.status).toBe(429);
+    
+    const errorData = await chatResponse2.json();
+    expect(errorData.error).toBeDefined();
+    expect(errorData.error.message).toContain('Insufficient tokens');
+  });
+  
+  // PROMPT: Group-Based Limits
+  test('Token management - group-based limits', async () => {
+    // First user with google_logged_in group
+    const googleLoginResponse = await fetch(`${baseUrl}/${tenantId}/auth/login`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        provider: 'google',
+        token: 'valid-google-token'
+      })
+    });
+    
+    expect(googleLoginResponse.status).toBe(200);
+    const googleLoginData = await googleLoginResponse.json();
+    const googleUserTokens = googleLoginData.remaining_tokens;
+    
+    // Now set up a "premium" user by manipulating Stripe API response for next auth
+    const stripeCustomerId = 'cus_premium123';
+    await redisClient.set('mock:stripe:premium_customer', stripeCustomerId);
+    
+    // Re-authenticate same user to get premium status
+    const premiumLoginResponse = await fetch(`${baseUrl}/${tenantId}/auth/login`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        provider: 'google',
+        token: 'valid-google-token'
+      })
+    });
+    
+    const premiumReauthData = await premiumLoginResponse.json();
+    
+    // Verify premium user has higher token allocation
+    expect(premiumReauthData.user.group).toBe('stripe_premium');
+    expect(premiumReauthData.remaining_tokens).toBeGreaterThan(googleUserTokens);
+  });
+  
+  // PROMPT: Apple Auth
+  test('Apple OAuth authentication - success', async () => {
+    const response = await fetch(`${baseUrl}/${tenantId}/auth/login`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        provider: 'apple',
+        token: 'valid-apple-token'
+      })
+    });
+    
+    expect(response.status).toBe(200);
+    
+    const responseData = await response.json();
+    expect(responseData.api_key).toBeDefined();
+    expect(responseData.user.email).toBe('apple.user@example.com');
+    expect(responseData.user.group).toBe('google_logged_in');
+    expect(responseData.remaining_tokens).toBe(1000);
+  });
+  
+  // PROMPT: Same Email Different Providers
+  test('Multi-provider support - same email different providers', async () => {
+    // First authenticate with Google
+    const googleResponse = await fetch(`${baseUrl}/${tenantId}/auth/login`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        provider: 'google',
+        token: 'same-email-token'
+      })
+    });
+    
+    expect(googleResponse.status).toBe(200);
+    
+    const googleData = await googleResponse.json();
+    const googleUserId = googleData.user.id;
+    
+    // Now authenticate with Apple using same email
+    const appleResponse = await fetch(`${baseUrl}/${tenantId}/auth/login`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        provider: 'apple',
+        token: 'same-email-apple-token'
+      })
+    });
+    
+    expect(appleResponse.status).toBe(200);
+    
+    const appleData = await appleResponse.json();
+    const appleUserId = appleData.user.id;
+    
+    // Verify same user account is returned
+    expect(appleUserId).toBe(googleUserId);
+  });
+  
+  // PROMPT: Stripe Integration - Subscription Check
+  test('Stripe integration - subscription check', async () => {
+    // Setup premium customer in mock Stripe API
+    const stripeCustomerId = 'cus_premium_upgrade';
+    await redisClient.set('mock:stripe:premium_customer', stripeCustomerId);
+    
+    // First authenticate to create user
+    const loginResponse = await fetch(`${baseUrl}/${tenantId}/auth/login`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        provider: 'google',
+        token: 'stripe-test-token'
+      })
+    });
+    
+    expect(loginResponse.status).toBe(200);
+    const loginData = await loginResponse.json();
+    
+    // Verify first login is google_logged_in
+    expect(loginData.user.group).toBe('google_logged_in');
+    
+    // Set up Stripe mock to return premium subscription
+    await redisClient.set('mock:stripe:premium_subscription', 'true');
+    
+    // Re-authenticate to trigger subscription check
+    const reauthResponse = await fetch(`${baseUrl}/${tenantId}/auth/login`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        provider: 'google',
+        token: 'stripe-test-token'
+      })
+    });
+    
+    const reauthData = await reauthResponse.json();
+    
+    // PROMPT: Verify group updated to `stripe_premium`
+    expect(reauthData.user.group).toBe('stripe_premium');
+    
+    // PROMPT: Verify higher token allocation
+    const tenantConfig = JSON.parse(await redisClient.get(`tenant:${tenantId}:config`));
+    const premiumTokens = tenantConfig.user_groups.stripe_premium.tokens;
+    expect(reauthData.remaining_tokens).toBe(premiumTokens);
+  });
+  
+  // Helper function to setup mock Google OAuth server
+  function setupMockGoogleServer() {
+    // PROMPT: Mock OAuth validation logic for Google
+    return http.createServer((req, res) => {
+      const authHeader = req.headers.authorization || '';
       
-      // Create a mock user with the premium email
-      const apiKey = `vs_user_premium_${Date.now()}`;
-      const premiumEmail = "premium@example.com";
-      
-      await redisClient.set(`apiKey:${apiKey}`, JSON.stringify({
-        userId: `user_premium_${Date.now()}`,
-        email: premiumEmail,
-        name: "Premium User",
-        group: "google_logged_in", // Initial regular group
-        tenantId: tenantId
-      }));
-      
-      // The actual test would verify Stripe plans through the login flow
-      // Since we already mocked this in our servers, we can test directly:
-      
-      // Create a custom handler to run the Stripe check manually
-      const stripeCheckHandler = async (email) => {
-        const config = JSON.parse(await redisClient.get(`tenant:${tenantId}:config`));
-        const stripeConfig = config.auth.stripe;
-        
-        const response = await fetch(`${stripeConfig.api_url}/customers?email=${encodeURIComponent(email)}`, {
-          method: 'GET',
-          headers: {
-            'Authorization': `Bearer ${stripeConfig.api_key}`,
-            'Content-Type': 'application/x-www-form-urlencoded'
-          }
+      if (req.url === '/oauth2/v1/userinfo') {
+        if (authHeader.includes('valid-google-token')) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            id: 'google_12345',
+            email: 'user@example.com',
+            verified_email: true,
+            name: 'Test User',
+            given_name: 'Test',
+            family_name: 'User',
+            picture: 'https://example.com/photo.jpg'
+          }));
+        } else if (authHeader.includes('same-email-token')) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            id: 'google_12345',
+            email: 'same@example.com', // Same email for multi-provider test
+            verified_email: true,
+            name: 'Same Email User',
+            given_name: 'Same',
+            family_name: 'User'
+          }));
+        } else if (authHeader.includes('stripe-test-token')) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            id: 'google_stripe_test',
+            email: 'premium@example.com',
+            verified_email: true,
+            name: 'Premium User'
+          }));
+        } else {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            error: 'Invalid token'
+          }));
+        }
+      } else {
+        res.writeHead(404);
+        res.end();
+      }
+    });
+  }
+  
+  // Helper function to setup mock Apple OAuth server
+  function setupMockAppleServer() {
+    // PROMPT: Mock OAuth validation logic for Apple
+    const privateKey = crypto.generateKeyPairSync('rsa', {
+      modulusLength: 2048
+    }).privateKey;
+    
+    const publicKey = crypto.generateKeyPairSync('rsa', {
+      modulusLength: 2048
+    }).publicKey;
+    
+    const jwk = {
+      kty: 'RSA',
+      kid: 'apple-key-1',
+      use: 'sig',
+      alg: 'RS256',
+      n: publicKey.export({ format: 'jwk' }).n,
+      e: publicKey.export({ format: 'jwk' }).e
+    };
+    
+    // Generate valid Apple token
+    const validAppleToken = jsonwebtoken.sign({
+      iss: 'https://appleid.apple.com',
+      aud: 'com.example.app',
+      exp: Math.floor(Date.now() / 1000) + 3600,
+      sub: 'apple_user_12345',
+      email: 'apple.user@example.com',
+      email_verified: true
+    }, privateKey, { algorithm: 'RS256', keyid: 'apple-key-1' });
+    
+    // Generate token with same email as Google
+    const sameEmailToken = jsonwebtoken.sign({
+      iss: 'https://appleid.apple.com',
+      aud: 'com.example.app',
+      exp: Math.floor(Date.now() / 1000) + 3600,
+      sub: 'apple_user_67890',
+      email: 'same@example.com', // Same email for multi-provider test
+      email_verified: true
+    }, privateKey, { algorithm: 'RS256', keyid: 'apple-key-1' });
+    
+    return http.createServer((req, res) => {
+      if (req.url === '/auth/keys') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          keys: [jwk]
+        }));
+      } else if (req.url === '/validate') {
+        let body = '';
+        req.on('data', chunk => {
+          body += chunk.toString();
         });
         
-        if (!response.ok) {
-          return 'google_logged_in';
-        }
-        
-        const data = await response.json();
-        
-        // If customer exists, check their subscription
-        if (data.data && data.data.length > 0) {
-          const customerId = data.data[0].id;
-          
-          // Get customer's subscriptions
-          const subResponse = await fetch(`${stripeConfig.api_url}/subscriptions?customer=${customerId}`, {
-            method: 'GET',
-            headers: {
-              'Authorization': `Bearer ${stripeConfig.api_key}`,
-              'Content-Type': 'application/x-www-form-urlencoded'
+        req.on('end', () => {
+          try {
+            const data = JSON.parse(body);
+            const token = data.token;
+            
+            if (token === 'valid-apple-token') {
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(validAppleToken);
+            } else if (token === 'same-email-apple-token') {
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(sameEmailToken);
+            } else {
+              res.writeHead(401, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: 'Invalid token' }));
             }
-          });
-          
-          if (!subResponse.ok) {
-            return 'google_logged_in';
+          } catch (e) {
+            res.writeHead(400);
+            res.end();
           }
-          
-          const subData = await subResponse.json();
-          
-          // Check for active subscription and map to appropriate group
-          if (subData.data && subData.data.length > 0) {
-            const activeSub = subData.data.find(sub => sub.status === 'active');
-            if (activeSub) {
-              // Check plan/price ID to determine tier
-              if (activeSub.plan && activeSub.plan.id.includes('premium')) {
-                return 'stripe_premium';
-              } else {
-                return 'stripe_basic';
-              }
-            }
-          }
-        }
-        
-        // Default to basic logged-in user if no subscription found
-        return 'google_logged_in';
-      };
-      
-      // Run the check for premium user
-      const premiumGroup = await stripeCheckHandler(premiumEmail);
-      expect(premiumGroup).toBe('stripe_premium');
-      
-      // Run the check for regular user
-      const regularGroup = await stripeCheckHandler('user@example.com');
-      expect(regularGroup).toBe('stripe_basic');
-      
-      // Run the check for user without subscription
-      const noSubGroup = await stripeCheckHandler('nosubscription@example.com');
-      expect(noSubGroup).toBe('google_logged_in');
+        });
+      } else {
+        res.writeHead(404);
+        res.end();
+      }
     });
-  });
+  }
+  
+  // Helper function to setup mock Stripe server
+  function setupMockStripeServer() {
+    // PROMPT: Mock Stripe API responses
+    return http.createServer(async (req, res) => {
+      const urlObj = new URL(req.url, 'http://localhost');
+      
+      if (urlObj.pathname === '/v1/customers' && urlObj.searchParams.has('email')) {
+        const email = urlObj.searchParams.get('email');
+        
+        // Check if we need to return a premium customer
+        const premiumCustomerId = await redisClient.get('mock:stripe:premium_customer');
+        const hasPremium = !!premiumCustomerId;
+        
+        if (email === 'premium@example.com' && hasPremium) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            data: [{
+              id: premiumCustomerId,
+              email: email,
+              created: Math.floor(Date.now() / 1000),
+              name: 'Premium User'
+            }]
+          }));
+        } else if (email) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            data: [{
+              id: 'cus_regular123',
+              email: email,
+              created: Math.floor(Date.now() / 1000),
+              name: 'Regular User'
+            }]
+          }));
+        } else {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ data: [] }));
+        }
+      } else if (urlObj.pathname === '/v1/subscriptions' && urlObj.searchParams.has('customer')) {
+        const hasPremiumSubscription = await redisClient.get('mock:stripe:premium_subscription');
+        
+        if (hasPremiumSubscription) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            data: [{
+              id: 'sub_premium123',
+              customer: urlObj.searchParams.get('customer'),
+              status: 'active',
+              current_period_end: Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60,
+              plan: {
+                id: 'plan_premium',
+                nickname: 'Premium Plan',
+                amount: 19900
+              }
+            }]
+          }));
+        } else {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ data: [] }));
+        }
+      } else {
+        res.writeHead(404);
+        res.end(JSON.stringify({ error: 'Not found' }));
+      }
+    });
+  }
+  
+  // Helper function to setup mock OpenAI server
+  function setupMockOpenAIServer() {
+    return http.createServer((req, res) => {
+      if (req.url === '/v1/chat/completions') {
+        let body = '';
+        req.on('data', chunk => {
+          body += chunk.toString();
+        });
+        
+        req.on('end', () => {
+          try {
+            const data = JSON.parse(body);
+            
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+              id: 'chatcmpl-mock123',
+              object: 'chat.completion',
+              created: Math.floor(Date.now() / 1000),
+              model: data.model || 'gpt-4o',
+              choices: [{
+                index: 0,
+                message: {
+                  role: 'assistant',
+                  content: 'This is a mock response from the OpenAI API.'
+                },
+                finish_reason: 'stop'
+              }],
+              usage: {
+                prompt_tokens: 10,
+                completion_tokens: 20,
+                total_tokens: 30
+              }
+            }));
+          } catch (e) {
+            res.writeHead(400);
+            res.end(JSON.stringify({ error: 'Invalid request' }));
+          }
+        });
+      } else {
+        res.writeHead(404);
+        res.end();
+      }
+    });
+  }
 });

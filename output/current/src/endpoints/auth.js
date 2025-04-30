@@ -1,18 +1,18 @@
 import { 
   generateApiKey, 
-  calculateExpirationTime, 
-  storeApiKey, 
+  storeUserData, 
+  validateGoogleToken, 
+  validateAppleToken,
+  checkStripeSubscription,
   validateApiKey,
   getRemainingTokens,
-  verifyAppleIdToken,
-  checkStripeSubscription
+  getExpirationTime
 } from '../auth.js';
+
 import { v4 as uuidv4 } from 'uuid';
 
-/**
- * Handle OAuth login from various providers
- */
-export const oauthLogin = (redisClient) => async (ctx) => {
+// PROMPT: OAuth Authentication Endpoint: `POST /:tenantId/auth/login`
+export const loginWithOAuth = (redisClient) => async (ctx) => {
   const { tenantId, tenantConfig } = ctx.state;
   const { provider, token } = ctx.request.body;
 
@@ -22,90 +22,205 @@ export const oauthLogin = (redisClient) => async (ctx) => {
     return;
   }
 
-  try {
-    let userData;
-    let providerConfig;
-
-    // Get provider-specific configuration
-    switch (provider) {
-      case 'google':
-        providerConfig = tenantConfig.auth.google_oauth;
-        userData = await handleGoogleAuth(token, providerConfig);
-        break;
-      case 'apple':
-        providerConfig = tenantConfig.auth.apple_oauth;
-        userData = await handleAppleAuth(token, providerConfig);
-        break;
-      default:
-        ctx.status = 400;
-        ctx.body = { error: `Unsupported provider: ${provider}` };
-        return;
+  // PROMPT: Support multiple OAuth providers with same endpoint structure
+  if (provider === 'google') {
+    // PROMPT: Fetch tenant config from Redis; use tenant's `auth.google_oauth.client_id` and `client_secret`
+    const googleConfig = tenantConfig.auth.google_oauth;
+    
+    if (!googleConfig) {
+      ctx.status = 400;
+      ctx.body = { error: "Google OAuth not configured for this tenant" };
+      return;
     }
+    
+    // PROMPT: Default to standard provider endpoints if not specified
+    const userInfoUrl = googleConfig.userinfo_url || 'https://www.googleapis.com/oauth2/v1/userinfo';
+    
+    // PROMPT: Validate the OAuth token with Google's API
+    const validation = await validateGoogleToken(
+      token, 
+      googleConfig.client_id, 
+      googleConfig.client_secret,
+      userInfoUrl
+    );
 
-    if (!userData) {
+    if (!validation.valid) {
       ctx.status = 401;
-      ctx.body = { error: "Authentication failed" };
+      ctx.body = { error: validation.error };
       return;
     }
 
-    // Check user's subscription status with Stripe if configured
-    let userGroup = `${provider}_logged_in`;
-    if (tenantConfig.auth.stripe && tenantConfig.auth.stripe.api_key) {
-      userGroup = await checkStripeSubscription(
-        tenantConfig.auth.stripe, 
-        userData.email
-      );
+    // PROMPT: Retrieve user information (email, name, profile)
+    const { email, name, picture, id: googleId } = validation.data;
+    
+    // Check if user already exists
+    const userKey = `tenant:${tenantId}:user:email:${email}`;
+    let userId = await redisClient.get(userKey);
+
+    if (!userId) {
+      // Create new user
+      userId = `user_${uuidv4()}`;
+      await redisClient.set(userKey, userId);
+      
+      // Store user profile
+      await redisClient.set(`user:${userId}`, JSON.stringify({
+        id: userId,
+        email,
+        name,
+        picture,
+        googleId,
+        createdAt: new Date().toISOString(),
+        tenantId
+      }));
     }
 
-    // Get token allocation for this user group
-    const groupConfig = tenantConfig.user_groups[userGroup] || 
-                        tenantConfig.user_groups.google_logged_in;
+    // PROMPT: Subscription Check: On successful authentication, check user's subscription status
+    const stripeConfig = tenantConfig.auth.stripe;
+    const subscriptionData = await checkStripeSubscription(userId, email, stripeConfig);
+    const userGroup = subscriptionData.group;
     
-    // Generate API key and expiration
+    // PROMPT: Generate API key with format `vs_user_[alphanumeric]`
     const apiKey = generateApiKey();
-    const expiresAt = calculateExpirationTime(groupConfig);
     
-    // Create user ID if not already existing
-    const userId = userData.id || `user_${uuidv4()}`;
+    // PROMPT: Set appropriate API key expiration based on user group (longer for paid users)
+    const expires_at = getExpirationTime(userGroup);
     
-    // Store user data in Redis
-    const userDataToStore = {
+    // PROMPT: Store in Redis: `apiKey:<api_key>` → `{tenantId, userId, email, group, expires_at}`
+    await storeUserData(redisClient, apiKey, {
       tenantId,
       userId,
-      email: userData.email,
-      name: userData.name,
+      email,
       group: userGroup,
-      expires_at: expiresAt,
-      totalTokens: groupConfig.tokens
-    };
+      expires_at
+    });
     
-    // Store API key with user data
-    await storeApiKey(redisClient, apiKey, userDataToStore, expiresAt);
+    // PROMPT: Include remaining token count in authentication responses
+    const remainingTokens = await getRemainingTokens(redisClient, apiKey, userGroup, tenantConfig);
     
+    // PROMPT: Log `[INFO] User authenticated for <tenantId>:<userId>` on successful login
     console.log(`[INFO] User authenticated for ${tenantId}:${userId}`);
     
-    // Return success response
+    // PROMPT: Return API key and user information
     ctx.status = 200;
     ctx.body = {
       api_key: apiKey,
-      expires_at: expiresAt,
+      expires_at,
       user: {
         id: userId,
-        email: userData.email,
+        email,
         group: userGroup
       },
-      remaining_tokens: groupConfig.tokens
+      remaining_tokens: remainingTokens
     };
-  } catch (error) {
-    console.error(`[ERROR] Authentication error for ${tenantId}: ${error}`);
-    ctx.status = 401;
-    ctx.body = { error: "Authentication failed: " + error.message };
+  } 
+  else if (provider === 'apple') {
+    // PROMPT: Validate using tenant's `auth.apple_oauth.client_id` and `client_secret`
+    const appleConfig = tenantConfig.auth.apple_oauth;
+    
+    if (!appleConfig) {
+      ctx.status = 400;
+      ctx.body = { error: "Apple OAuth not configured for this tenant" };
+      return;
+    }
+    
+    // PROMPT: Fetch Apple's public keys from `keys_url` endpoint
+    const keysUrl = appleConfig.keys_url || 'https://appleid.apple.com/auth/keys';
+    
+    // PROMPT: Apple-specific validation procedures
+    const validation = await validateAppleToken(
+      token,
+      appleConfig.client_id,
+      appleConfig.client_secret,
+      keysUrl
+    );
+
+    if (!validation.valid) {
+      ctx.status = 401;
+      ctx.body = { error: validation.error };
+      return;
+    }
+    
+    // PROMPT: Extract user info from identity token claims
+    const { sub: appleId, email, email_verified } = validation.data;
+    
+    // Handle optional user data that might be included only on first login
+    const firstName = validation.data.given_name || '';
+    const lastName = validation.data.family_name || '';
+    const name = firstName && lastName ? `${firstName} ${lastName}` : '';
+    
+    // PROMPT: Handle Apple's private email relay service
+    const isPrivateEmail = validation.data.is_private_email;
+    
+    // Check if user already exists
+    const userKey = `tenant:${tenantId}:user:email:${email}`;
+    let userId = await redisClient.get(userKey);
+
+    if (!userId) {
+      // Create new user
+      userId = `user_${uuidv4()}`;
+      await redisClient.set(userKey, userId);
+      
+      // Store user profile
+      await redisClient.set(`user:${userId}`, JSON.stringify({
+        id: userId,
+        email,
+        name,
+        appleId,
+        isPrivateEmail,
+        createdAt: new Date().toISOString(),
+        tenantId,
+        firstName,
+        lastName
+      }));
+    } else if (firstName && lastName) {
+      // Update existing user with additional name info if provided
+      const existingUser = JSON.parse(await redisClient.get(`user:${userId}`));
+      existingUser.firstName = firstName;
+      existingUser.lastName = lastName;
+      existingUser.name = name;
+      
+      await redisClient.set(`user:${userId}`, JSON.stringify(existingUser));
+    }
+
+    // Check subscription status
+    const stripeConfig = tenantConfig.auth.stripe;
+    const subscriptionData = await checkStripeSubscription(userId, email, stripeConfig);
+    const userGroup = subscriptionData.group;
+    
+    const apiKey = generateApiKey();
+    const expires_at = getExpirationTime(userGroup);
+    
+    await storeUserData(redisClient, apiKey, {
+      tenantId,
+      userId,
+      email,
+      group: userGroup,
+      expires_at
+    });
+    
+    const remainingTokens = await getRemainingTokens(redisClient, apiKey, userGroup, tenantConfig);
+    
+    console.log(`[INFO] User authenticated for ${tenantId}:${userId}`);
+    
+    ctx.status = 200;
+    ctx.body = {
+      api_key: apiKey,
+      expires_at,
+      user: {
+        id: userId,
+        email,
+        group: userGroup
+      },
+      remaining_tokens: remainingTokens
+    };
+  } 
+  else {
+    ctx.status = 400;
+    ctx.body = { error: `Unsupported provider: ${provider}` };
   }
 };
 
-/**
- * Handle API key refresh
- */
+// PROMPT: API Key Refresh: `POST /:tenantId/auth/refresh`
 export const refreshApiKey = (redisClient) => async (ctx) => {
   const { tenantId, tenantConfig } = ctx.state;
   const authHeader = ctx.headers.authorization;
@@ -118,99 +233,43 @@ export const refreshApiKey = (redisClient) => async (ctx) => {
   
   const currentApiKey = authHeader.substring(7); // Remove 'Bearer ' prefix
   
-  try {
-    // Validate the current API key
-    const userData = await validateApiKey(redisClient, currentApiKey);
-    
-    if (!userData || userData.tenantId !== tenantId) {
-      ctx.status = 401;
-      ctx.body = { error: "Invalid API key" };
-      return;
-    }
-    
-    // Get remaining tokens
-    const remainingTokens = await getRemainingTokens(redisClient, currentApiKey);
-    
-    // Generate new API key
-    const newApiKey = generateApiKey();
-    
-    // Get user group config for expiration
-    const groupConfig = tenantConfig.user_groups[userData.group];
-    const expiresAt = calculateExpirationTime(groupConfig);
-    
-    // Store new API key
-    await storeApiKey(redisClient, newApiKey, {
-      ...userData,
-      expires_at: expiresAt
-    }, expiresAt);
-    
-    // Return success response
-    ctx.status = 200;
-    ctx.body = {
-      api_key: newApiKey,
-      expires_at: expiresAt,
-      remaining_tokens: remainingTokens
-    };
-    
-  } catch (error) {
-    console.error(`[ERROR] API key refresh error for ${tenantId}: ${error}`);
-    ctx.status = 500;
-    ctx.body = { error: "Failed to refresh API key" };
+  // PROMPT: Validate current API key from Redis
+  const validation = await validateApiKey(redisClient, currentApiKey);
+  if (!validation.valid) {
+    ctx.status = 401;
+    ctx.body = { error: validation.error };
+    return;
   }
-};
-
-/**
- * Handle Google OAuth authentication
- * @param {string} token - Google OAuth token
- * @param {Object} config - Google OAuth configuration
- * @returns {Promise<Object>} - User data if authenticated
- */
-async function handleGoogleAuth(token, config) {
-  // Verify the token with Google
-  const response = await fetch(config.userinfo_url, {
-    method: 'GET',
-    headers: {
-      'Authorization': `Bearer ${token}`
-    }
+  
+  const userData = validation.user;
+  
+  // Verify this API key belongs to the requested tenant
+  if (userData.tenantId !== tenantId) {
+    ctx.status = 403;
+    ctx.body = { error: "API key does not belong to this tenant" };
+    return;
+  }
+  
+  // PROMPT: Generate new API key with extended expiration
+  const newApiKey = generateApiKey();
+  const expires_at = getExpirationTime(userData.group);
+  
+  // PROMPT: Update Redis with new key information
+  await storeUserData(redisClient, newApiKey, {
+    ...userData,
+    expires_at
   });
   
-  if (!response.ok) {
-    console.error('[ERROR] Google authentication failed:', await response.text());
-    return null;
-  }
+  // Invalidate old API key (optional - alternative is to let it expire naturally)
+  await redisClient.del(`apiKey:${currentApiKey}`);
   
-  // Get user data from Google
-  const userData = await response.json();
+  // PROMPT: Include remaining token count in authentication responses
+  const remainingTokens = await getRemainingTokens(redisClient, newApiKey, userData.group, tenantConfig);
   
-  return {
-    id: userData.id,
-    email: userData.email,
-    name: userData.name,
-    picture: userData.picture
+  ctx.status = 200;
+  ctx.body = {
+    api_key: newApiKey,
+    expires_at,
+    remaining_tokens: remainingTokens
   };
-}
-
-/**
- * Handle Apple OAuth authentication
- * @param {string} token - Apple identity token (JWT)
- * @param {Object} config - Apple OAuth configuration
- * @returns {Promise<Object>} - User data if authenticated
- */
-async function handleAppleAuth(token, config) {
-  try {
-    // Verify Apple ID token
-    const payload = await verifyAppleIdToken(token, config);
-    
-    // Extract user information
-    return {
-      id: payload.sub,  // Apple User ID
-      email: payload.email,
-      name: payload.name || null, // May not be available after first login
-      email_verified: payload.email_verified,
-      is_private_email: payload.is_private_email
-    };
-  } catch (error) {
-    console.error('[ERROR] Apple authentication failed:', error);
-    throw error;
-  }
-}
+};

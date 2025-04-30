@@ -1,185 +1,236 @@
+// PROMPT: Store all OAuth credentials and API keys encrypted in Redis
 import crypto from 'crypto';
 
-/**
- * Generate a new API key for a user
- * @param {string} prefix - Prefix for the API key (e.g. 'vs_user')
- * @returns {string} - Generated API key
- */
-export function generateApiKey(prefix = 'vs_user') {
-  const randomString = crypto.randomBytes(16).toString('hex');
-  return `${prefix}_${randomString}`;
-}
+// PROMPT: Generate API key with format `vs_user_[alphanumeric]`
+export const generateApiKey = () => {
+  const randomBytes = crypto.randomBytes(16);
+  return `vs_user_${randomBytes.toString('hex')}`;
+};
 
-/**
- * Calculate expiration time based on user group
- * @param {Object} userGroup - User group configuration
- * @returns {string} - ISO date string for expiration time
- */
-export function calculateExpirationTime(userGroup) {
-  // Default expiration is 24 hours
-  const expirationHours = userGroup?.expiration_hours || 24;
-  const expirationDate = new Date();
-  expirationDate.setHours(expirationDate.getHours() + expirationHours);
-  return expirationDate.toISOString();
-}
-
-/**
- * Store user API key in Redis
- * @param {Object} redisClient - Redis client
- * @param {string} apiKey - API key to store
- * @param {Object} userData - User data to associate with API key
- * @param {string} expiresAt - ISO date string for expiration time
- */
-export async function storeApiKey(redisClient, apiKey, userData, expiresAt) {
-  // Calculate TTL in seconds
-  const now = new Date();
-  const expireDate = new Date(expiresAt);
-  const ttlSeconds = Math.floor((expireDate.getTime() - now.getTime()) / 1000);
-  
-  // Store API key with expiration
+// PROMPT: Store in Redis: `apiKey:<api_key>` → `{tenantId, userId, email, group, expires_at}`
+export const storeUserData = async (redisClient, apiKey, userData) => {
   await redisClient.set(`apiKey:${apiKey}`, JSON.stringify(userData));
-  await redisClient.expire(`apiKey:${apiKey}`, ttlSeconds);
-}
+  
+  if (userData.expires_at) {
+    // Set TTL based on expiration time
+    const expiresAt = new Date(userData.expires_at);
+    const now = new Date();
+    const ttlSeconds = Math.floor((expiresAt - now) / 1000);
+    
+    if (ttlSeconds > 0) {
+      await redisClient.expire(`apiKey:${apiKey}`, ttlSeconds);
+    }
+  }
+  
+  return userData;
+};
 
-/**
- * Validate an API key and return associated user data
- * @param {Object} redisClient - Redis client
- * @param {string} apiKey - API key to validate
- * @returns {Object|null} - User data if valid, null otherwise
- */
-export async function validateApiKey(redisClient, apiKey) {
-  const userData = await redisClient.get(`apiKey:${apiKey}`);
-  if (!userData) return null;
-  
-  return JSON.parse(userData);
-}
-
-/**
- * Get remaining token count for a user
- * @param {Object} redisClient - Redis client
- * @param {string} apiKey - User's API key
- * @returns {number} - Remaining token count
- */
-export async function getRemainingTokens(redisClient, apiKey) {
-  const tokenKey = `tokens:${apiKey}`;
-  const tokensUsed = parseInt(await redisClient.get(tokenKey) || '0', 10);
-  const userData = await validateApiKey(redisClient, apiKey);
-  
-  if (!userData) return 0;
-  
-  // Get user's total token allocation based on their group
-  // This would need to be looked up from the tenant config
-  const totalTokens = userData.totalTokens || 1000;
-  return Math.max(0, totalTokens - tokensUsed);
-}
-
-/**
- * Verify OAuth JWT token from Apple
- * @param {Object} token - The JWT token to verify
- * @param {Object} appleConfig - Apple OAuth configuration
- * @returns {Promise<Object>} - Decoded token payload if valid
- * @throws {Error} - If token is invalid
- */
-export async function verifyAppleIdToken(token, appleConfig) {
-  // Fetch Apple's public keys
-  const keysResponse = await fetch(appleConfig.keys_url);
-  if (!keysResponse.ok) {
-    throw new Error('Failed to fetch Apple public keys');
-  }
-  
-  const keysData = await keysResponse.json();
-  
-  // Parse the JWT to get the header
-  const [headerBase64, payloadBase64] = token.split('.');
-  const header = JSON.parse(Buffer.from(headerBase64, 'base64').toString());
-  const payload = JSON.parse(Buffer.from(payloadBase64, 'base64').toString());
-  
-  // Find the matching key based on kid (Key ID)
-  const matchingKey = keysData.keys.find(key => key.kid === header.kid);
-  if (!matchingKey) {
-    throw new Error('No matching key found for token');
-  }
-  
-  // Verify token claims
-  if (payload.iss !== 'https://appleid.apple.com') {
-    throw new Error('Invalid token issuer');
-  }
-  
-  if (payload.aud !== appleConfig.client_id) {
-    throw new Error('Invalid audience in token');
-  }
-  
-  if (payload.exp < Math.floor(Date.now() / 1000)) {
-    throw new Error('Token has expired');
-  }
-  
-  // In a real implementation, you'd verify the JWT signature here
-  // This would require a JWT library, which we're avoiding per requirements
-  
-  return payload;
-}
-
-/**
- * Check user's Stripe subscription status
- * @param {Object} stripeConfig - Stripe API configuration
- * @param {string} email - User's email address
- * @returns {Promise<string>} - Subscription level as a user group name
- */
-export async function checkStripeSubscription(stripeConfig, email) {
+// PROMPT: Validate the OAuth token with Google's API
+export const validateGoogleToken = async (token, clientId, clientSecret, userInfoUrl) => {
   try {
-    const response = await fetch(`${stripeConfig.api_url}/customers?email=${encodeURIComponent(email)}`, {
-      method: 'GET',
+    // Verify token with Google
+    const response = await fetch(userInfoUrl, {
       headers: {
-        'Authorization': `Bearer ${stripeConfig.api_key}`,
-        'Content-Type': 'application/x-www-form-urlencoded'
+        'Authorization': `Bearer ${token}`
       }
     });
     
     if (!response.ok) {
-      console.error('[ERROR] Stripe API error:', await response.text());
-      return 'google_logged_in'; // Default fallback group
+      return { valid: false, error: 'Invalid Google token' };
     }
     
-    const data = await response.json();
-    
-    // If customer exists, check their subscription
-    if (data.data && data.data.length > 0) {
-      const customerId = data.data[0].id;
-      
-      // Get customer's subscriptions
-      const subResponse = await fetch(`${stripeConfig.api_url}/subscriptions?customer=${customerId}`, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${stripeConfig.api_key}`,
-          'Content-Type': 'application/x-www-form-urlencoded'
-        }
-      });
-      
-      if (!subResponse.ok) {
-        return 'google_logged_in'; // Default fallback group
-      }
-      
-      const subData = await subResponse.json();
-      
-      // Check for active subscription and map to appropriate group
-      if (subData.data && subData.data.length > 0) {
-        const activeSub = subData.data.find(sub => sub.status === 'active');
-        if (activeSub) {
-          // Check plan/price ID to determine tier
-          if (activeSub.plan && activeSub.plan.id.includes('premium')) {
-            return 'stripe_premium';
-          } else {
-            return 'stripe_basic';
-          }
-        }
-      }
-    }
-    
-    // Default to basic logged-in user if no subscription found
-    return 'google_logged_in';
-    
+    const userData = await response.json();
+    return { valid: true, data: userData };
   } catch (error) {
-    console.error('[ERROR] Error checking Stripe subscription:', error);
-    return 'google_logged_in'; // Default fallback group
+    return { valid: false, error: error.message };
   }
-}
+};
+
+// PROMPT: Apple-specific validation procedures
+export const validateAppleToken = async (token, clientId, clientSecret, keysUrl) => {
+  try {
+    // Decode the JWT without verification to get the key ID from header
+    const tokenParts = token.split('.');
+    if (tokenParts.length !== 3) {
+      return { valid: false, error: 'Invalid token format' };
+    }
+    
+    // Get header to find kid (key ID)
+    const headerJson = Buffer.from(tokenParts[0], 'base64').toString();
+    const header = JSON.parse(headerJson);
+    const kid = header.kid;
+    
+    // Fetch Apple's public keys
+    const keysResponse = await fetch(keysUrl);
+    if (!keysResponse.ok) {
+      return { valid: false, error: 'Failed to fetch Apple public keys' };
+    }
+    
+    const keysData = await keysResponse.json();
+    const key = keysData.keys.find(k => k.kid === kid);
+    
+    if (!key) {
+      return { valid: false, error: 'No matching key found' };
+    }
+    
+    // Format key to PEM format
+    const pubKey = crypto.createPublicKey({
+      key: { 
+        kty: key.kty, 
+        n: key.n, 
+        e: key.e 
+      },
+      format: 'jwk'
+    });
+    
+    // Verify signature
+    const signaturePart = tokenParts[2].replace(/_/g, '/').replace(/-/g, '+');
+    const signature = Buffer.from(signaturePart, 'base64');
+    
+    const dataToVerify = `${tokenParts[0]}.${tokenParts[1]}`;
+    const isValid = crypto.verify(
+      'sha256',
+      Buffer.from(dataToVerify),
+      pubKey,
+      signature
+    );
+    
+    if (!isValid) {
+      return { valid: false, error: 'Invalid signature' };
+    }
+    
+    // Verify payload claims
+    const payloadJson = Buffer.from(tokenParts[1], 'base64').toString();
+    const payload = JSON.parse(payloadJson);
+    
+    // PROMPT: Validate standard JWT claims: `iss` must be "https://appleid.apple.com", `aud` must match your `client_id`, `exp` timestamp must not be passed
+    if (payload.iss !== 'https://appleid.apple.com') {
+      return { valid: false, error: 'Invalid issuer' };
+    }
+    
+    if (payload.aud !== clientId) {
+      return { valid: false, error: 'Invalid audience' };
+    }
+    
+    if (payload.exp < Math.floor(Date.now() / 1000)) {
+      return { valid: false, error: 'Token expired' };
+    }
+    
+    return { valid: true, data: payload };
+  } catch (error) {
+    return { valid: false, error: error.message };
+  }
+};
+
+// PROMPT: Map subscription level to appropriate user group (e.g., `stripe_basic`, `stripe_premium`)
+export const checkStripeSubscription = async (userId, email, stripeConfig) => {
+  try {
+    const { api_key, api_url } = stripeConfig;
+    const baseUrl = api_url || 'https://api.stripe.com/v1';
+    
+    // Search for customer by email
+    const customersResponse = await fetch(`${baseUrl}/customers?email=${encodeURIComponent(email)}`, {
+      headers: {
+        'Authorization': `Bearer ${api_key}`,
+        'Content-Type': 'application/x-www-form-urlencoded'
+      }
+    });
+    
+    if (!customersResponse.ok) {
+      return { group: 'google_logged_in' }; // Default if Stripe API fails
+    }
+    
+    const customers = await customersResponse.json();
+    if (customers.data.length === 0) {
+      return { group: 'google_logged_in' }; // No customer found
+    }
+    
+    // Get subscription for the first matching customer
+    const customerId = customers.data[0].id;
+    const subscriptionsResponse = await fetch(`${baseUrl}/subscriptions?customer=${customerId}&status=active`, {
+      headers: {
+        'Authorization': `Bearer ${api_key}`,
+        'Content-Type': 'application/x-www-form-urlencoded'
+      }
+    });
+    
+    if (!subscriptionsResponse.ok) {
+      return { group: 'google_logged_in' };
+    }
+    
+    const subscriptions = await subscriptionsResponse.json();
+    
+    // Map subscription level to user group
+    if (subscriptions.data.length > 0) {
+      const subscription = subscriptions.data[0];
+      const planId = subscription.plan?.id;
+      
+      if (planId?.includes('premium')) {
+        return { group: 'stripe_premium', subscription_id: subscription.id };
+      } else if (planId?.includes('basic')) {
+        return { group: 'stripe_basic', subscription_id: subscription.id };
+      }
+    }
+    
+    return { group: 'google_logged_in' };
+  } catch (error) {
+    return { group: 'google_logged_in' }; // Default if any error occurs
+  }
+};
+
+// PROMPT: Validate current API key from Redis
+export const validateApiKey = async (redisClient, apiKey) => {
+  try {
+    const userData = await redisClient.get(`apiKey:${apiKey}`);
+    
+    if (!userData) {
+      return { valid: false, error: 'Invalid API key' };
+    }
+    
+    const user = JSON.parse(userData);
+    
+    // Check if token is expired
+    if (user.expires_at && new Date(user.expires_at) < new Date()) {
+      return { valid: false, error: 'API key expired' };
+    }
+    
+    return { valid: true, user };
+  } catch (error) {
+    return { valid: false, error: error.message };
+  }
+};
+
+// PROMPT: Apply rate limits based on user's group from tenant configuration
+export const getRateLimitConfig = (tenantConfig, userGroup) => {
+  return tenantConfig.user_groups[userGroup] || tenantConfig.user_groups.google_logged_in;
+};
+
+// PROMPT: Track token usage per API key: `tokens:<api_key>` in Redis
+export const getTokenUsage = async (redisClient, apiKey) => {
+  const tokensUsed = await redisClient.get(`tokens:${apiKey}:used`) || 0;
+  return parseInt(tokensUsed);
+};
+
+// PROMPT: Include remaining token count in authentication responses
+export const getRemainingTokens = async (redisClient, apiKey, userGroup, tenantConfig) => {
+  const tokensUsed = await getTokenUsage(redisClient, apiKey);
+  const totalTokens = tenantConfig.user_groups[userGroup]?.tokens || 0;
+  return Math.max(0, totalTokens - tokensUsed);
+};
+
+// PROMPT: Set appropriate API key expiration based on user group (longer for paid users)
+export const getExpirationTime = (userGroup) => {
+  const now = new Date();
+  
+  // Set expiration time based on user group
+  if (userGroup === 'stripe_premium') {
+    // 30 days for premium users
+    return new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString();
+  } else if (userGroup === 'stripe_basic') {
+    // 15 days for basic users
+    return new Date(now.getTime() + 15 * 24 * 60 * 60 * 1000).toISOString();
+  } else {
+    // 7 days for regular users
+    return new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
+  }
+};
