@@ -127,8 +127,11 @@
   - Use plain JavaScript (ES6+)
   - Ensure the server shuts down gracefully on SIGTERM/SIGINT with a console log: `[INFO] Server shutting down`.
   - Don't start server when used as a module. Use `import.meta.url.endsWith(process.argv[1])` to check.
-  - Expose `createApp` function that takes `deps` object (including Redis client) as an argument and returns a promise that resolves to the `app` instance for testing.
-  - Ensure Redis client is initialized before the server starts listening.
+  - Expose `createApp` function:
+    - Take `deps` object (including Redis client) as an argument
+    - Ensure Redis client is initialized before the server starts listening.
+    - Ensure default tenant config is set up
+    - Return a promise that resolves to the `app` instance for testing.
   - Log `[INFO] Loaded tenant config for <tenantId>` on successful config fetch.
   - Use async/await for Redis operations.
 
