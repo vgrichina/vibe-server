@@ -31,8 +31,13 @@ Add the `/:tenantId/v1/chat/completions` endpoint for text-based LLM interaction
 
 - **Behavior**:
   - Fetch tenant config from Redis using tenant ID from auth token
+  - Check provider API key in tenant config; return 403 if missing
   - Generate conversation ID if not provided
-  - Rate limit requests per tenant; return 429 with `{"error": {"message": "Rate limit exceeded"}}` if exceeded
+  - Rate limit requests per user per tenant:
+    - Redis Key: `rate_limit:{user_id}:{window_timestamp}` (e.g., `rate_limit:user123:2025-04-30T12:00)`.
+    - Counter: Use INCR to track requests in the window.
+    - Expire: Use EXPIRE to set a TTL for the counter to 2x the window size.
+    - Return 429 with `{"error": {"message": "Rate limit exceeded"}}` if exceeded
   - Validate context window size; return 400 if messages exceed token limit
   - If `stream: true`:
     - Set headers: `Content-Type: text/event-stream`, `Cache-Control: no-cache`, `Connection: keep-alive`
@@ -57,6 +62,8 @@ Add the `/:tenantId/v1/chat/completions` endpoint for text-based LLM interaction
     }
     ```
 
+    - Pass through the response from the provider, don't remove any fields. This includes error responses.
+
 - **Token Check**:
   - Fetch user ID based on API key from auth token
   - Fetch user data from Redis using user ID. This includes the user's token balance.
@@ -70,6 +77,7 @@ Add the `/:tenantId/v1/chat/completions` endpoint for text-based LLM interaction
   - 500: Internal server error
 
 - **Implementation Notes**:
+  - Use `PassThrough` to stream the response from the provider.
   - Log `[INFO] Processing chat completion for <tenantId>:<jobId>` for each request
   - Support any OpenAI-compatible provider as a backend. Don't mock the provider.
   - Make sure to update `bin/server.js` to add the new endpoint, including tenant middleware.
