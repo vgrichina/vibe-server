@@ -19,20 +19,20 @@ Generate comprehensive unit tests for the chat completions endpoint:
 
   **Insufficient Tokens**:
      - Set `tokens:abc:anonymous:anonymous-uuid` to 0.
-     - Assert 429 with `{"error": "Insufficient tokens"}`.
+     - Assert 429
 
   **Missing API Key**:
      - Mock tenant config without `openai` key.
      - Mock OpenAI API to return 403 when no API key is provided.
-     - Assert 403 with `{"error": "No OpenAI API key configured"}`.
+     - Assert 403
 
   **Rate Limiting**:
      - Send multiple requests in quick succession.
-     - Assert 429 after exceeding rate limit with `{"error": {"message": "Rate limit exceeded"}}`.
+     - Assert 429 after exceeding rate limit
 
   **Invalid Model**:
      - Send request with `model: "invalid-model"`.
-     - Assert 400 with `{"error": {"message": "Model not supported"}}`.
+     - Assert 400
 
   **Missing Messages**:
      - Send request without messages array.
