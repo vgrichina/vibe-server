@@ -1,46 +1,41 @@
+// PROMPT: Implement a caching system for text-based responses with tenant-configurable settings
+
 /**
- * Cache utilities for tenant-specific caching
+ * Checks if caching is enabled for the given tenant configuration
  */
+export function isCachingEnabled(tenantConfig) {
+  return tenantConfig?.caching?.enabled === true;
+}
 
-// Check if caching is enabled and get cache configuration for a tenant
-export const getCacheConfig = (tenantConfig) => {
-  if (!tenantConfig?.caching?.enabled) {
-    return null;
-  }
-  
-  return {
-    enabled: true,
-    text_ttl: tenantConfig.caching.text_ttl || 86400, // Default 24 hours
-    transcription_ttl: tenantConfig.caching.transcription_ttl || 3600, // Default 1 hour
-    fee_percentage: tenantConfig.caching.fee_percentage || 20 // Default 20%
-  };
-};
-
-// Generate a cache key based on tenantId and provided cache key
-export const generateCacheKey = (tenantId, cacheKey) => {
+/**
+ * Builds a cache key for the given tenant and cache key
+ */
+export function buildCacheKey(tenantId, cacheKey) {
+  // PROMPT: Cache key: `cache:<tenantId>:<cache_key>` (e.g., `cache:abc:anonymous:intro-conversation-v1`)
   return `cache:${tenantId}:${cacheKey}`;
-};
+}
 
-// Check if a response exists in cache
-export const getFromCache = async (redisClient, tenantId, cacheKey) => {
-  if (!cacheKey) return null;
-  
-  const fullCacheKey = generateCacheKey(tenantId, cacheKey);
-  const cachedResponse = await redisClient.get(fullCacheKey);
-  
-  if (cachedResponse) {
-    console.log(`[INFO] Cache hit for ${cacheKey}`);
-    return JSON.parse(cachedResponse);
-  }
-  
-  return null;
-};
+/**
+ * Gets the text TTL from the tenant configuration
+ */
+export function getTextTTL(tenantConfig) {
+  // PROMPT: Cache miss: Generate mock response (`"Cached response"`), store in Redis with TTL from `text_ttl`, then return.
+  return tenantConfig?.caching?.text_ttl || 86400; // Default to 1 day if not specified
+}
 
-// Store a response in cache
-export const storeInCache = async (redisClient, tenantId, cacheKey, response, ttl) => {
-  if (!cacheKey) return;
-  
-  const fullCacheKey = generateCacheKey(tenantId, cacheKey);
-  await redisClient.setEx(fullCacheKey, ttl, JSON.stringify(response));
-  console.log(`[INFO] Cache miss, stored ${cacheKey}`);
-};
+/**
+ * Tries to get a cached response for the given key
+ */
+export async function getCachedResponse(redisClient, cacheKey) {
+  // PROMPT: Use Redis `GET` and `SETEX` for cache operations.
+  const cachedResponse = await redisClient.get(cacheKey);
+  return cachedResponse ? JSON.parse(cachedResponse) : null;
+}
+
+/**
+ * Stores a response in the cache with the specified TTL
+ */
+export async function cacheResponse(redisClient, cacheKey, response, ttl) {
+  // PROMPT: Use Redis `GET` and `SETEX` for cache operations.
+  await redisClient.setEx(cacheKey, ttl, JSON.stringify(response));
+}

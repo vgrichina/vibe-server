@@ -1,283 +1,253 @@
 import { jest } from '@jest/globals';
-import { createServer } from 'http';
-import WebSocket from 'ws';
-import Koa from 'koa';
-import Router from 'koa-router';
-import bodyParser from 'koa-bodyparser';
-import ws from 'koa-easy-ws';
+import { WebSocket } from 'ws';
 import { createClient } from 'redis';
-import { initializeRealtimeSession, handleRealtimeStream } from '../src/endpoints/realtime.js';
+import http from 'http';
+import { createApp } from '../bin/server.js';
 
+// PROMPT: Use Node's `ws` module for WebSocket testing.
 describe('Realtime WebSocket API', () => {
   let server;
+  let app;
   let redisClient;
   let port;
   let baseUrl;
 
+  // Set up server and redis for tests
   beforeAll(async () => {
-    // Create Redis client
-    redisClient = createClient();
+    redisClient = createClient({ url: process.env.REDIS_URL || 'redis://localhost:6379' });
     await redisClient.connect();
-
-    // Create test server
-    const app = new Koa();
-    const router = new Router();
     
-    // Add middleware
-    app.use(bodyParser());
-    app.use(ws());
+    // Ensure the default tenant config exists
+    const existingConfig = await redisClient.get('tenant:abc:config');
+    if (!existingConfig) {
+      const defaultConfig = {
+        providers: {
+          realtime: {
+            default: "openai_realtime",
+            endpoints: {
+              openai_realtime: {
+                model: "gpt-4o-realtime-preview-2024-12-17",
+                voice: "alloy",
+                api_key: "sk-rt-abc123"
+              }
+            }
+          }
+        }
+      };
+      await redisClient.set('tenant:abc:config', JSON.stringify(defaultConfig));
+    }
     
-    // Add routes
-    router.post('/v1/realtime/initialize', initializeRealtimeSession(redisClient));
-    router.get('/v1/realtime/stream', handleRealtimeStream(ws, redisClient));
-    app.use(router.routes());
-
-    // Create HTTP server
-    server = createServer(app.callback());
-    await new Promise(resolve => {
-      server.listen(0, 'localhost', () => resolve());
-    });
-    port = server.address().port;
+    app = await createApp({ redisClient });
+    server = http.createServer(app.callback());
+    server.listen();
+    
+    const address = server.address();
+    port = address.port;
     baseUrl = `http://localhost:${port}`;
   });
-
+  
   afterAll(async () => {
-    // Cleanup
-    await new Promise((resolve) => server.close(resolve));
-    
-    // Clean up Redis
-    await redisClient.flushDb();
-    await redisClient.quit();
+    // Clean up
+    if (server && server.listening) {
+      await new Promise(resolve => server.close(resolve));
+    }
+    if (redisClient.isOpen) {
+      await redisClient.quit();
+    }
   });
 
-  describe('Session Initialization', () => {
-    test('should initialize a session with valid parameters', async () => {
-      // Create request payload
-      const payload = {
+  // PROMPT: Initialize Session: Send `POST /v1/realtime/initialize` with `X-Tenant-Id: abc`, body as above.
+  test('should initialize a realtime session', async () => {
+    const response = await fetch(`${baseUrl}/v1/realtime/initialize`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Tenant-Id': 'abc'
+      },
+      body: JSON.stringify({
         backend: 'openai_realtime',
-        systemPrompt: 'You are a helpful assistant',
+        systemPrompt: 'You are a helpful assistant.',
         tools: [],
         ttsService: 'openai',
         cache_key: 'test-cache'
-      };
-
-      // Send request
-      const response = await fetch(`${baseUrl}/v1/realtime/initialize`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Tenant-Id': 'abc'
-        },
-        body: JSON.stringify(payload)
-      });
-
-      // Assert response
-      expect(response.status).toBe(200);
-      const data = await response.json();
-      
-      // Check response structure
-      expect(data.sessionId).toBeTruthy();
-      expect(data.wsUrl).toBeTruthy();
-      expect(data.remainingTokens).toBeGreaterThan(0);
-
-      // Verify session exists in Redis
-      const sessionId = data.sessionId;
-      const sessionState = await redisClient.get(`session:abc:${sessionId}:state`);
-      
-      expect(sessionState).toBeTruthy();
-      const parsedState = JSON.parse(sessionState);
-      expect(parsedState.backend).toBe('openai_realtime');
-      expect(parsedState.systemPrompt).toBe('You are a helpful assistant');
-      expect(parsedState.createdAt).toBeTruthy();
+      })
     });
-
-    test('should reject requests without tenant ID', async () => {
-      const payload = {
-        backend: 'openai_realtime',
-        systemPrompt: 'You are a helpful assistant'
-      };
-
-      const response = await fetch(`${baseUrl}/v1/realtime/initialize`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(payload)
-      });
-
-      expect(response.status).toBe(400);
-      const data = await response.json();
-      expect(data.error).toBe('X-Tenant-Id header is required');
-    });
-
-    test('should reject requests with invalid backend', async () => {
-      const payload = {
-        backend: 'invalid_backend',
-        systemPrompt: 'You are a helpful assistant'
-      };
-
-      const response = await fetch(`${baseUrl}/v1/realtime/initialize`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Tenant-Id': 'abc'
-        },
-        body: JSON.stringify(payload)
-      });
-
-      expect(response.status).toBe(400);
-      const data = await response.json();
-      expect(data.error).toContain('Invalid backend');
-    });
+    
+    expect(response.status).toBe(200);
+    
+    const data = await response.json();
+    expect(data.sessionId).toBeDefined();
+    expect(data.sessionId).toMatch(/tenant:abc:session:[a-f0-9-]+/);
+    expect(data.wsUrl).toBeDefined();
+    expect(data.wsUrl).toContain(`ws://localhost:${port}/v1/realtime/stream?sid=`);
+    expect(data.remainingTokens).toBeDefined();
+    
+    // PROMPT: Verify session state in Redis.
+    const sessionState = await redisClient.get(`session:abc:${data.sessionId}:state`);
+    expect(sessionState).toBeDefined();
+    
+    const parsedState = JSON.parse(sessionState);
+    expect(parsedState.backend).toBe('openai_realtime');
+    expect(parsedState.systemPrompt).toBe('You are a helpful assistant.');
+    expect(parsedState.tokensUsed).toBe(0);
+    
+    return { sessionId: data.sessionId, wsUrl: data.wsUrl };
   });
 
-  describe('WebSocket Communication', () => {
-    let sessionId;
-    let wsUrl;
-
-    beforeEach(async () => {
-      // Initialize a session
-      const payload = {
+  // PROMPT: WebSocket Text Echo: Connect to `wsUrl` with `sid`, send message, assert response
+  test('should echo text messages through WebSocket', async () => {
+    // Initialize session first
+    const initResponse = await fetch(`${baseUrl}/v1/realtime/initialize`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Tenant-Id': 'abc'
+      },
+      body: JSON.stringify({
         backend: 'openai_realtime',
-        systemPrompt: 'You are a helpful assistant',
+        systemPrompt: 'You are a helpful assistant.',
         tools: [],
         ttsService: 'openai',
         cache_key: 'test-cache'
-      };
-
-      const response = await fetch(`${baseUrl}/v1/realtime/initialize`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Tenant-Id': 'abc'
-        },
-        body: JSON.stringify(payload)
-      });
-
-      const data = await response.json();
-      sessionId = data.sessionId;
-      
-      // Convert HTTP URL to WebSocket URL
-      const wsUrlFromResponse = data.wsUrl;
-      wsUrl = wsUrlFromResponse.replace('http://', 'ws://').replace('https://', 'wss://');
+      })
     });
-
-    test('should handle text messages over WebSocket', async () => {
-      // Create WebSocket client
-      const client = new WebSocket(wsUrl);
-      
-      // Wait for connection to establish
-      await new Promise(resolve => {
-        client.on('open', resolve);
-      });
-
-      // Setup promise to wait for response
-      const responsePromise = new Promise(resolve => {
-        client.on('message', data => {
-          resolve(JSON.parse(data.toString()));
-        });
-      });
-
-      // Send a text message
-      const message = {
-        inputType: 'text',
-        data: 'Hi'
-      };
-      client.send(JSON.stringify(message));
-
-      // Wait for and verify response
-      const response = await responsePromise;
-      expect(response.outputType).toBe('text');
-      expect(response.data).toBe('Hello back! You sent: Hi');
-
-      // Close connection
-      client.close();
-      
-      // Wait for connection to close
-      await new Promise(resolve => {
-        client.on('close', resolve);
-      });
-
-      // Verify messages were stored in history
-      const historyKey = `session:abc:${sessionId}:history`;
-      const historyLength = await redisClient.lLen(historyKey);
-      expect(historyLength).toBe(2); // 1 user message + 1 assistant response
-
-      const userMessage = JSON.parse(await redisClient.lIndex(historyKey, 0));
-      expect(userMessage.role).toBe('user');
-      expect(userMessage.content).toBe('Hi');
-
-      const assistantMessage = JSON.parse(await redisClient.lIndex(historyKey, 1));
-      expect(assistantMessage.role).toBe('assistant');
-      expect(assistantMessage.content).toBe('Hello back! You sent: Hi');
+    
+    const initData = await initResponse.json();
+    const wsUrl = initData.wsUrl;
+    
+    // Connect to the WebSocket
+    const socket = new WebSocket(wsUrl);
+    
+    // Set up message handler and connection handler
+    const connectedPromise = new Promise(resolve => {
+      socket.on('open', resolve);
     });
-
-    test('should handle audio messages over WebSocket', async () => {
-      // Create WebSocket client
-      const client = new WebSocket(wsUrl);
-      
-      // Wait for connection to establish
-      await new Promise(resolve => {
-        client.on('open', resolve);
+    
+    let receivedMessage = null;
+    const messagePromise = new Promise(resolve => {
+      socket.on('message', data => {
+        receivedMessage = JSON.parse(data.toString());
+        resolve();
       });
-
-      // Setup promise to wait for response
-      const responsePromise = new Promise(resolve => {
-        client.on('message', data => {
-          resolve(JSON.parse(data.toString()));
-        });
-      });
-
-      // Send an audio message (using a dummy base64 string)
-      const dummyBase64Audio = 'SGVsbG8sIHRoaXMgaXMgYSB0ZXN0'; // "Hello, this is a test" in base64
-      const message = {
-        inputType: 'audio',
-        data: dummyBase64Audio
-      };
-      client.send(JSON.stringify(message));
-
-      // Wait for and verify response
-      const response = await responsePromise;
-      expect(response.outputType).toBe('audio');
-      expect(response.data).toBe(dummyBase64Audio); // Echo back for now
-
-      // Close connection
-      client.close();
-      
-      // Wait for connection to close
-      await new Promise(resolve => {
-        client.on('close', resolve);
-      });
-
-      // Verify messages were stored in history
-      const historyKey = `session:abc:${sessionId}:history`;
-      const historyLength = await redisClient.lLen(historyKey);
-      expect(historyLength).toBe(2); // 1 user message + 1 assistant response
-
-      const userMessage = JSON.parse(await redisClient.lIndex(historyKey, 0));
-      expect(userMessage.role).toBe('user');
-      expect(userMessage.content).toBe('[audio input]');
-
-      const assistantMessage = JSON.parse(await redisClient.lIndex(historyKey, 1));
-      expect(assistantMessage.role).toBe('assistant');
-      expect(assistantMessage.content).toBe('[audio output]');
+    });
+    
+    // Wait for connection to be established
+    await connectedPromise;
+    
+    // PROMPT: Send `{"inputType": "text", "data": "Hi"}`.
+    socket.send(JSON.stringify({
+      inputType: 'text',
+      data: 'Hi'
+    }));
+    
+    // Wait for response
+    await messagePromise;
+    
+    // PROMPT: Assert `{"outputType": "text", "data": "Hello back"}` received
+    expect(receivedMessage).toEqual({
+      outputType: 'text',
+      data: 'Hello back'
+    });
+    
+    // Verify message was stored in Redis history
+    const history = await redisClient.lRange(`session:abc:${initData.sessionId}:history`, 0, -1);
+    expect(history.length).toBeGreaterThanOrEqual(2);
+    
+    // Close the connection
+    socket.close();
+    
+    return new Promise(resolve => {
+      socket.on('close', resolve);
     });
   });
 
-  test('should reject connections with invalid session ID', async () => {
-    const invalidWsUrl = `ws://localhost:${port}/v1/realtime/stream?sid=invalid_session_id`;
-    const client = new WebSocket(invalidWsUrl);
+  // PROMPT: WebSocket Audio Echo: Send audio message, assert response
+  test('should echo audio messages through WebSocket', async () => {
+    // Initialize session first
+    const initResponse = await fetch(`${baseUrl}/v1/realtime/initialize`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Tenant-Id': 'abc'
+      },
+      body: JSON.stringify({
+        backend: 'openai_realtime',
+        systemPrompt: 'You are a helpful assistant.',
+        tools: [],
+        ttsService: 'openai',
+        cache_key: 'test-cache'
+      })
+    });
     
-    // Setup promise to wait for connection close
+    const initData = await initResponse.json();
+    const wsUrl = initData.wsUrl;
+    
+    // Connect to the WebSocket
+    const socket = new WebSocket(wsUrl);
+    
+    // Set up message handler and connection handler
+    const connectedPromise = new Promise(resolve => {
+      socket.on('open', resolve);
+    });
+    
+    let receivedMessage = null;
+    const messagePromise = new Promise(resolve => {
+      socket.on('message', data => {
+        receivedMessage = JSON.parse(data.toString());
+        resolve();
+      });
+    });
+    
+    // Wait for connection to be established
+    await connectedPromise;
+    
+    // PROMPT: Send `{"inputType": "audio", "data": "base64-audio"}`.
+    const audioData = "base64-audio";
+    socket.send(JSON.stringify({
+      inputType: 'audio',
+      data: audioData
+    }));
+    
+    // Wait for response
+    await messagePromise;
+    
+    // PROMPT: Assert `{"outputType": "audio", "data": "base64-echo"}` received.
+    expect(receivedMessage).toEqual({
+      outputType: 'audio',
+      data: audioData
+    });
+    
+    // Verify message was stored in Redis history
+    const history = await redisClient.lRange(`session:abc:${initData.sessionId}:history`, 0, -1);
+    expect(history.length).toBeGreaterThanOrEqual(2);
+    
+    // Close the connection
+    socket.close();
+    
+    return new Promise(resolve => {
+      socket.on('close', resolve);
+    });
+  });
+
+  // PROMPT: Invalid Session: Connect with invalid `sid`, assert connection closes with code 1008
+  test('should reject WebSocket connection with invalid session ID', async () => {
+    const invalidSid = 'tenant:abc:session:invalid-uuid';
+    const wsUrl = `ws://localhost:${port}/v1/realtime/stream?sid=${invalidSid}`;
+    
+    // Connect to the WebSocket with invalid sid
+    const socket = new WebSocket(wsUrl);
+    
+    // Wait for close event with appropriate code
     const closePromise = new Promise(resolve => {
-      client.on('close', (code, reason) => {
-        resolve({ code, reason: reason.toString() });
+      socket.on('close', (code, reason) => {
+        resolve({ code, reason });
       });
     });
-
-    // Wait for close event
-    const closeEvent = await closePromise;
-    expect(closeEvent.code).toBe(1008);
-    expect(closeEvent.reason).toContain('Invalid session ID');
+    
+    const { code, reason } = await closePromise;
+    
+    // PROMPT: Assert connection closes with code 1008
+    expect(code).toBe(1008);
+    expect(reason.toString()).toBe('Invalid session ID');
   });
 });

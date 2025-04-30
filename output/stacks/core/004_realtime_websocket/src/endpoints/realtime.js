@@ -1,185 +1,180 @@
 import { v4 as uuidv4 } from 'uuid';
 
-// Initialize a new realtime session
-export const initializeRealtimeSession = (redisClient) => async (ctx) => {
+// PROMPT: Initialize Endpoint: POST /v1/realtime/initialize
+export async function initializeRealtimeSession(ctx) {
   const tenantId = ctx.headers['x-tenant-id'];
-  
   if (!tenantId) {
     ctx.status = 400;
-    ctx.body = { error: "X-Tenant-Id header is required" };
+    ctx.body = { error: 'X-Tenant-Id header is required' };
     return;
   }
 
-  // Parse request body
   const { backend, systemPrompt, tools, ttsService, cache_key } = ctx.request.body;
-
-  // Validate backend type
-  const validBackends = ['openai_realtime', 'ultravox'];
-  if (!validBackends.includes(backend)) {
+  
+  // PROMPT: Validate: `backend` (enum: `openai_realtime`, `ultravox`).
+  if (backend !== 'openai_realtime' && backend !== 'ultravox') {
     ctx.status = 400;
-    ctx.body = { error: "Invalid backend. Must be one of: " + validBackends.join(', ') };
+    ctx.body = { error: 'Invalid backend. Must be either openai_realtime or ultravox.' };
     return;
   }
 
-  // Check token balance
-  const tokenBalance = await getTokenBalance(redisClient, tenantId);
-  if (tokenBalance < 1) {
+  // PROMPT: Check token balance in Redis; return 429 if < 1.
+  const tenantConfig = await ctx.app.redisClient.get(`tenant:${tenantId}:config`);
+  if (!tenantConfig) {
+    ctx.status = 404;
+    ctx.body = { error: 'Tenant not found' };
+    return;
+  }
+
+  // Mock token balance check
+  const remainingTokens = 100;
+  if (remainingTokens < 1) {
     ctx.status = 429;
-    ctx.body = { error: "Insufficient token balance" };
+    ctx.body = { error: 'Insufficient token balance' };
     return;
   }
 
-  // Generate session ID
+  // PROMPT: Generate `sessionId`: `tenant:<tenantId>:session:<uuid>`.
   const sessionUuid = uuidv4();
   const sessionId = `tenant:${tenantId}:session:${sessionUuid}`;
-
-  // Store session state in Redis
+  
+  // PROMPT: Store session state in Redis: `session:<tenantId>:<sessionId>:state`
   const sessionState = {
     backend,
     systemPrompt,
     tools,
     ttsService,
     cache_key,
-    tokensUsed: 0,
-    createdAt: new Date().toISOString()
+    tokensUsed: 0
   };
-
-  await redisClient.set(
-    `session:${tenantId}:${sessionId}:state`,
-    JSON.stringify(sessionState)
-  );
-
-  // Create empty history
-  await redisClient.del(`session:${tenantId}:${sessionId}:history`);
-
-  // Log new session creation
+  
+  await ctx.app.redisClient.set(`session:${tenantId}:${sessionId}:state`, JSON.stringify(sessionState));
+  
+  // PROMPT: Log `[INFO] New realtime session: <sessionId>` on initialization.
   console.log(`[INFO] New realtime session: ${sessionId}`);
-
-  // Prepare response
-  const { protocol, host } = ctx;
-  const wsProtocol = protocol === 'https' ? 'wss' : 'ws';
-  const wsUrl = `${wsProtocol}://${host}/v1/realtime/stream?sid=${sessionId}`;
-
+  
+  // PROMPT: Return sessionId, wsUrl, and remainingTokens
+  const host = ctx.request.headers.host || 'localhost:3000';
+  const protocol = ctx.request.secure ? 'wss' : 'ws';
+  
   ctx.status = 200;
   ctx.body = {
     sessionId,
-    wsUrl,
-    remainingTokens: tokenBalance
+    wsUrl: `${protocol}://${host}/v1/realtime/stream?sid=${sessionId}`,
+    remainingTokens
   };
-};
-
-// Helper to get token balance (mocked for now)
-async function getTokenBalance(redisClient, tenantId) {
-  // This would be replaced with actual token balance lookup
-  return 100;
 }
 
-// WebSocket handler for realtime streaming
-export const handleRealtimeStream = (ws, redisClient) => async (ctx) => {
+// PROMPT: WebSocket Endpoint: /v1/realtime/stream
+export async function handleRealtimeStream(ctx) {
   if (!ctx.ws) {
     ctx.status = 400;
-    ctx.body = { error: "This endpoint requires WebSocket connection" };
+    ctx.body = { error: 'WebSocket connection required' };
     return;
   }
-
-  // Get the WebSocket connection
-  const socket = await ctx.ws();
-
-  // Get session ID from query parameters
-  const { sid } = ctx.query;
+  
+  // PROMPT: Query param: `sid` (required).
+  const { sid } = ctx.request.query;
   if (!sid) {
-    socket.close(1008, "Missing session ID");
+    ctx.status = 400;
+    ctx.body = { error: 'Session ID (sid) is required' };
     return;
   }
 
-  // Parse session ID to extract tenant ID
-  const sessionParts = sid.split(':');
-  if (sessionParts.length !== 4 || sessionParts[0] !== 'tenant' || sessionParts[2] !== 'session') {
-    socket.close(1008, "Invalid session ID format");
+  // Extract tenantId from sid (format: tenant:<tenantId>:session:<uuid>)
+  const sidParts = sid.split(':');
+  if (sidParts.length !== 4 || sidParts[0] !== 'tenant' || sidParts[2] !== 'session') {
+    ctx.status = 400;
+    ctx.body = { error: 'Invalid session ID format' };
     return;
   }
   
-  const tenantId = sessionParts[1];
+  const tenantId = sidParts[1];
   
-  // Validate the session exists in Redis
-  const sessionStateKey = `session:${tenantId}:${sid}:state`;
-  const sessionState = await redisClient.get(sessionStateKey);
+  // PROMPT: Validate `sid` matches session in Redis; close connection with code 1008 if invalid.
+  const sessionState = await ctx.app.redisClient.get(`session:${tenantId}:${sid}:state`);
+  
+  const ws = await ctx.ws();
   
   if (!sessionState) {
-    socket.close(1008, "Invalid or expired session");
+    ws.close(1008, 'Invalid session ID');
     return;
   }
-
-  // Handle incoming messages
-  socket.on('message', async (message) => {
+  
+  // PROMPT: Handle client messages
+  ws.on('message', async (message) => {
     try {
       const parsedMessage = JSON.parse(message);
       const { inputType, data } = parsedMessage;
-
-      // Handle different input types
+      
       if (inputType === 'text') {
-        // Mock text response for now
-        socket.send(JSON.stringify({
-          outputType: 'text',
-          data: `Hello back! You sent: ${data}`
-        }));
-
+        // PROMPT: Text Input: `{"inputType": "text", "data": "Hi"}` → echo `{"outputType": "text", "data": "Hello back"}`
         // Store message in history
-        await storeMessageInHistory(redisClient, tenantId, sid, {
+        await ctx.app.redisClient.rPush(`session:${tenantId}:${sid}:history`, JSON.stringify({
           role: 'user',
           content: data,
           timestamp: Date.now()
-        });
-
-        await storeMessageInHistory(redisClient, tenantId, sid, {
-          role: 'assistant',
-          content: `Hello back! You sent: ${data}`,
-          timestamp: Date.now()
-        });
-      } 
-      else if (inputType === 'audio') {
-        // Mock audio response for now
-        socket.send(JSON.stringify({
-          outputType: 'audio',
-          data: data  // Echo back the same audio data for now
         }));
-
-        // Store message in history
-        await storeMessageInHistory(redisClient, tenantId, sid, {
-          role: 'user',
-          content: '[audio input]',
-          timestamp: Date.now()
-        });
-
-        await storeMessageInHistory(redisClient, tenantId, sid, {
+        
+        // Mock response
+        const response = {
+          outputType: 'text',
+          data: 'Hello back'
+        };
+        
+        // Store assistant response in history
+        await ctx.app.redisClient.rPush(`session:${tenantId}:${sid}:history`, JSON.stringify({
           role: 'assistant',
-          content: '[audio output]',
+          content: response.data,
           timestamp: Date.now()
-        });
-      }
-      else {
-        socket.send(JSON.stringify({
+        }));
+        
+        ws.send(JSON.stringify(response));
+      } else if (inputType === 'audio') {
+        // PROMPT: Audio Input: `{"inputType": "audio", "data": "base64-audio"}` → echo `{"outputType": "audio", "data": "base64-echo"}`
+        // Store message in history (reference to audio)
+        await ctx.app.redisClient.rPush(`session:${tenantId}:${sid}:history`, JSON.stringify({
+          role: 'user',
+          content: '[AUDIO INPUT]',
+          timestamp: Date.now()
+        }));
+        
+        // Mock response
+        const response = {
+          outputType: 'audio',
+          data: data // Echo the same audio back
+        };
+        
+        // Store assistant response in history
+        await ctx.app.redisClient.rPush(`session:${tenantId}:${sid}:history`, JSON.stringify({
+          role: 'assistant',
+          content: '[AUDIO OUTPUT]',
+          timestamp: Date.now()
+        }));
+        
+        ws.send(JSON.stringify(response));
+      } else {
+        ws.send(JSON.stringify({
           outputType: 'error',
           data: `Unsupported input type: ${inputType}`
         }));
       }
     } catch (error) {
-      console.error(`[ERROR] WebSocket message handling error: ${error}`);
-      socket.send(JSON.stringify({
+      console.error(`[ERROR] WebSocket message processing error: ${error.message}`);
+      ws.send(JSON.stringify({
         outputType: 'error',
         data: 'Failed to process message'
       }));
     }
   });
-
-  // Handle socket close
-  socket.on('close', () => {
-    console.log(`[INFO] WebSocket closed for session: ${sid}`);
+  
+  ws.on('close', () => {
+    console.log(`[INFO] WebSocket connection closed for session: ${sid}`);
   });
-};
-
-// Helper to store messages in history
-async function storeMessageInHistory(redisClient, tenantId, sessionId, message) {
-  const historyKey = `session:${tenantId}:${sessionId}:history`;
-  await redisClient.rPush(historyKey, JSON.stringify(message));
 }
+
+// PROMPT: Add WebSocket support for realtime voice/text interactions with detailed session management
+export default {
+  initializeRealtimeSession,
+  handleRealtimeStream
+};

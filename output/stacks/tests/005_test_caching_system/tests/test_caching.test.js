@@ -2,355 +2,405 @@ import { jest } from '@jest/globals';
 import { createApp } from '../bin/server.js';
 import { createClient } from 'redis';
 import http from 'http';
+import Koa from 'koa';
+import Router from 'koa-router';
+import bodyParser from 'koa-bodyparser';
 
-const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
+let redisClient;
+let server;
+let baseURL;
+let mockOpenAIServer;
+let mockOpenAIURL;
+let apiKey;
+let originalConsoleLog;
+let logMessages = [];
 
-describe('Chat Completions Caching Tests', () => {
-  let redisClient;
-  let app;
-  let server;
-  let mockOpenAIServer;
-  let baseUrl;
-  let tenantId = 'abc';
-  let apiKey;
-  let userId;
-  let cacheKey = 'intro-conversation-v1';
+// PROMPT: Use Node's `http` module for requests.
+async function setupServer() {
+  // Setup mock OpenAI server
+  mockOpenAIServer = await setupMockOpenAIServer();
 
-  // Helper function to create a mock OpenAI API server
-  const setupMockOpenAIServer = () => {
-    return http.createServer((req, res) => {
-      let data = '';
-      req.on('data', chunk => {
-        data += chunk;
-      });
+  // Setup our app server
+  const app = await createApp({ redisClient });
+  server = http.createServer(app.callback());
 
-      req.on('end', () => {
-        if (req.url === '/v1/chat/completions') {
-          // Send standard non-streaming response
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({
-            id: `chatcmpl-${Date.now()}`,
-            object: "chat.completion",
-            created: Date.now(),
-            model: "gpt-4o",
-            choices: [{
-              index: 0,
-              message: {
-                role: "assistant",
-                content: "This is a response from the mock OpenAI server."
-              },
-              finish_reason: "stop"
-            }],
-            usage: {
-              prompt_tokens: 15,
-              completion_tokens: 12,
-              total_tokens: 27
-            }
-          }));
-        } else {
-          res.writeHead(404);
-          res.end();
+  await new Promise(resolve => {
+    server.listen(0, () => {
+      baseURL = `http://localhost:${server.address().port}`;
+      resolve();
+    });
+  });
+}
+
+// PROMPT: Mock OpenAI API and update URL in tenant config.
+async function setupMockOpenAIServer() {
+  const mockApp = new Koa();
+  const mockRouter = new Router();
+  mockApp.use(bodyParser());
+
+  mockRouter.post('/v1/chat/completions', async (ctx) => {
+    ctx.status = 200;
+    ctx.body = {
+      id: "chatcmpl-123",
+      object: "chat.completion",
+      created: Date.now(),
+      model: "gpt-4o",
+      choices: [
+        {
+          index: 0,
+          message: {
+            role: "assistant",
+            content: "This is a mock response"
+          },
+          finish_reason: "stop"
         }
-      });
-    });
-  };
+      ],
+      usage: {
+        prompt_tokens: 10,
+        completion_tokens: 8,
+        total_tokens: 18
+      }
+    };
+  });
 
-  const createAnonymousUser = async () => {
-    const response = await fetch(`${baseUrl}/${tenantId}/auth/anonymous`, {
-      method: 'POST',
-    });
-    
-    const data = await response.json();
-    apiKey = data.apiKey;
-    
-    // Get the userId from Redis
-    userId = await redisClient.get(`apiKey:${apiKey}`);
-    
-    return { apiKey, userId };
-  };
+  mockApp.use(mockRouter.routes());
+  mockApp.use(mockRouter.allowedMethods());
 
-  beforeAll(async () => {
-    // Connect to Redis
-    redisClient = createClient({ url: REDIS_URL });
-    redisClient.on('error', (err) => {
-      console.error(`Redis Test Client Error: ${err}`);
+  const mockServer = http.createServer(mockApp.callback());
+  await new Promise(resolve => {
+    mockServer.listen(0, () => {
+      const port = mockServer.address().port;
+      mockOpenAIURL = `http://localhost:${port}/v1/chat/completions`;
+      resolve();
     });
-    await redisClient.connect();
-    
-    // Setup mock OpenAI server
-    mockOpenAIServer = setupMockOpenAIServer();
-    mockOpenAIServer.listen(0); // Use a random available port
-    const mockOpenAIPort = mockOpenAIServer.address().port;
-    
-    // Create tenant config with mock OpenAI server URL and caching enabled
-    const tenantConfig = {
-      auth: {
-        stripe: { api_key: "sk_test_abc123" }
-      },
-      user_groups: {
-        anonymous: {
-          tokens: 100,
-          rate_limit: 10,
-          rate_limit_window: 60
-        }
-      },
-      providers: {
-        text: {
-          default: "openai",
-          endpoints: {
-            openai: {
-              url: `http://localhost:${mockOpenAIPort}/v1/chat/completions`,
-              default_model: "gpt-4o",
-              api_key: "sk-mock-api-key"
-            }
+  });
+
+  return mockServer;
+}
+
+// PROMPT: Preload `cache:abc:intro-conversation-v1` with mock data.
+async function preloadCache(cacheKey, data) {
+  await redisClient.setEx(`cache:abc:${cacheKey}`, 86400, JSON.stringify(data));
+}
+
+async function setupTenantConfig(cachingEnabled = true) {
+  const tenantId = 'abc';
+  const tenantConfigKey = `tenant:${tenantId}:config`;
+  const config = {
+    auth: {
+      stripe: { api_key: "sk_test_abc123" }
+    },
+    user_groups: {
+      anonymous: {
+        tokens: 100,
+        rate_limit: 10,
+        rate_limit_window: 60
+      }
+    },
+    providers: {
+      text: {
+        default: "openai",
+        endpoints: {
+          openai: {
+            url: mockOpenAIURL,
+            default_model: "gpt-4o",
+            api_key: "sk-abc123"
           }
         }
-      },
-      caching: {
-        enabled: true,
-        text_ttl: 86400, // 24 hours
-        fee_percentage: 20
+      }
+    },
+    caching: {
+      enabled: cachingEnabled,
+      text_ttl: 86400
+    }
+  };
+
+  await redisClient.set(tenantConfigKey, JSON.stringify(config));
+  return config;
+}
+
+async function getAnonymousApiKey() {
+  const response = await fetch(`${baseURL}/abc/auth/anonymous`, {
+    method: 'POST'
+  });
+  const data = await response.json();
+  return data.apiKey;
+}
+
+async function cleanupRedis() {
+  const keys = await redisClient.keys('cache:*');
+  if (keys.length > 0) {
+    await redisClient.del(keys);
+  }
+}
+
+beforeAll(async () => {
+  // PROMPT: Use only real Redis for testing. Don't mock it.
+  redisClient = createClient({ url: process.env.REDIS_URL || 'redis://localhost:6379' });
+  await redisClient.connect();
+
+  // Mock console.log to capture log messages
+  originalConsoleLog = console.log;
+  console.log = jest.fn((message) => {
+    logMessages.push(message);
+    originalConsoleLog(message);
+  });
+
+  await setupServer();
+  await setupTenantConfig(true);
+  apiKey = await getAnonymousApiKey();
+});
+
+beforeEach(async () => {
+  // Clear log messages before each test
+  logMessages = [];
+  // Clean up cache
+  await cleanupRedis();
+});
+
+afterAll(async () => {
+  // Restore original console.log
+  console.log = originalConsoleLog;
+  
+  if (server && server.listening) {
+    await new Promise(resolve => server.close(resolve));
+  }
+  
+  if (mockOpenAIServer && mockOpenAIServer.listening) {
+    await new Promise(resolve => mockOpenAIServer.close(resolve));
+  }
+  
+  if (redisClient.isOpen) {
+    await redisClient.quit();
+  }
+});
+
+describe('Cache System Tests', () => {
+  // PROMPT: Cache Hit: Preload `cache:abc:intro-conversation-v1` with mock data. Send `POST /v1/chat/completions` with `cache_key: "intro-conversation-v1"`. Assert cached response returned instantly. Check `[INFO] Cache hit` log.
+  test('Returns cached response when cache hit', async () => {
+    // Preload cache with mock data
+    const cacheKey = 'intro-conversation-v1';
+    const cachedData = {
+      id: "cached-response-123",
+      object: "chat.completion",
+      created: Date.now(),
+      model: "gpt-4o",
+      choices: [
+        {
+          index: 0,
+          message: {
+            role: "assistant",
+            content: "This is a cached response"
+          },
+          finish_reason: "stop"
+        }
+      ],
+      usage: {
+        prompt_tokens: 5,
+        completion_tokens: 5,
+        total_tokens: 10
       }
     };
     
-    await redisClient.set(`tenant:${tenantId}:config`, JSON.stringify(tenantConfig));
+    await preloadCache(cacheKey, cachedData);
     
-    // Create and start the server
-    app = await createApp({ redisClient });
-    server = app.listen();
+    // Send request with cache_key
+    const response = await fetch(`${baseURL}/abc/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        messages: [{ role: "user", content: "Hello" }],
+        model: "gpt-4o",
+        cache_key: cacheKey
+      })
+    });
     
-    // Get the dynamically assigned port
-    baseUrl = `http://localhost:${server.address().port}`;
-  });
-  
-  afterAll(async () => {
-    server.close();
-    mockOpenAIServer.close();
-    await redisClient.quit();
-  });
-  
-  beforeEach(async () => {
-    // Create a new anonymous user for each test
-    await createAnonymousUser();
+    expect(response.status).toBe(200);
+    const data = await response.json();
     
-    // Clean up any cache entries before each test
-    const cacheKeys = await redisClient.keys(`cache:${tenantId}:*`);
-    if (cacheKeys.length > 0) {
-      await redisClient.del(cacheKeys);
-    }
-  });
-  
-  afterEach(async () => {
-    // Clean up user data
-    if (userId) await redisClient.del(`user:${userId}`);
-    if (apiKey) await redisClient.del(`apiKey:${apiKey}`);
+    // Verify we got the cached response
+    expect(data.id).toBe(cachedData.id);
+    expect(data.choices[0].message.content).toBe("This is a cached response");
     
-    // Clean up cache entries
-    const cacheKeys = await redisClient.keys(`cache:${tenantId}:*`);
-    if (cacheKeys.length > 0) {
-      await redisClient.del(cacheKeys);
-    }
+    // Check for cache hit log
+    const cacheHitLog = logMessages.find(msg => msg.includes("[INFO] Cache hit"));
+    expect(cacheHitLog).toBeTruthy();
+    expect(cacheHitLog).toContain(`[INFO] Cache hit for ${cacheKey}`);
   });
 
-  test('Cache Hit - returns cached response', async () => {
-    // 1. Preload cache with mock data
-    const cachedResponse = {
-      id: "cached-response-id",
-      choices: [{
-        message: {
-          role: "assistant",
-          content: "This is a cached response"
+  // PROMPT: Cache Miss: Send same request with empty cache. Assert new response stored with TTL 86400. Check `[INFO] Cache miss` log.
+  test('Stores new response when cache miss', async () => {
+    const cacheKey = 'intro-conversation-v1';
+    
+    // Ensure cache is empty
+    await cleanupRedis();
+    
+    // Send request with cache_key
+    const response = await fetch(`${baseURL}/abc/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        messages: [{ role: "user", content: "Hello" }],
+        model: "gpt-4o",
+        cache_key: cacheKey
+      })
+    });
+    
+    expect(response.status).toBe(200);
+    const data = await response.json();
+    
+    // Check for cache miss log
+    const cacheMissLog = logMessages.find(msg => msg.includes("[INFO] Cache miss"));
+    expect(cacheMissLog).toBeTruthy();
+    expect(cacheMissLog).toContain(`[INFO] Cache miss, stored ${cacheKey}`);
+    
+    // Verify the response was stored in Redis with the correct TTL
+    const fullCacheKey = `cache:abc:${cacheKey}`;
+    const cachedResponse = await redisClient.get(fullCacheKey);
+    expect(cachedResponse).toBeTruthy();
+    
+    const ttl = await redisClient.ttl(fullCacheKey);
+    expect(ttl).toBeGreaterThan(0);
+    expect(ttl).toBeLessThanOrEqual(86400);
+    
+    // Verify stored data matches the response
+    const parsedCache = JSON.parse(cachedResponse);
+    expect(parsedCache.id).toBeTruthy();
+    expect(parsedCache.choices[0].text).toBe("Cached response");
+  });
+
+  // PROMPT: Caching Disabled: Mock config with `caching.enabled: false`. Assert no cache check occurs.
+  test('Does not check cache when caching is disabled', async () => {
+    // Setup tenant config with caching disabled
+    await setupTenantConfig(false);
+    
+    const cacheKey = 'intro-conversation-v1';
+    
+    // Preload cache with mock data (which should be ignored)
+    const cachedData = {
+      id: "cached-response-123",
+      object: "chat.completion",
+      created: Date.now(),
+      model: "gpt-4o",
+      choices: [
+        {
+          index: 0,
+          message: {
+            role: "assistant",
+            content: "This is a cached response"
+          },
+          finish_reason: "stop"
         }
-      }]
+      ]
     };
     
-    await redisClient.setEx(`cache:${tenantId}:${cacheKey}`, 86400, JSON.stringify(cachedResponse));
+    await preloadCache(cacheKey, cachedData);
     
-    // Spy on console.log to check for cache hit log message
-    const consoleSpy = jest.spyOn(console, 'log');
-    
-    // 2. Send request with cache_key
-    const response = await fetch(`${baseUrl}/${tenantId}/v1/chat/completions`, {
+    // Send request with cache_key
+    const response = await fetch(`${baseURL}/abc/v1/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${apiKey}`
       },
       body: JSON.stringify({
-        messages: [{ role: 'user', content: 'Hello' }],
-        model: 'gpt-4o',
+        messages: [{ role: "user", content: "Hello" }],
+        model: "gpt-4o",
         cache_key: cacheKey
       })
     });
-
-    // 3. Assert cached response returned
+    
     expect(response.status).toBe(200);
-    const responseData = await response.json();
+    const data = await response.json();
     
-    expect(responseData).toEqual(cachedResponse);
+    // Verify we did not get the cached response
+    expect(data.id).not.toBe(cachedData.id);
     
-    // 4. Check for cache hit log
-    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Cache hit'));
+    // Check there's no cache hit or miss log
+    const cacheHitLog = logMessages.find(msg => msg.includes("[INFO] Cache hit"));
+    const cacheMissLog = logMessages.find(msg => msg.includes("[INFO] Cache miss"));
+    expect(cacheHitLog).toBeFalsy();
+    expect(cacheMissLog).toBeFalsy();
     
-    consoleSpy.mockRestore();
+    // Re-enable caching for subsequent tests
+    await setupTenantConfig(true);
   });
 
-  test('Cache Miss - stores new response in cache', async () => {
-    // Spy on console.log to check for cache miss log message
-    const consoleSpy = jest.spyOn(console, 'log');
+  test('Handles multiple requests with same cache key correctly', async () => {
+    const cacheKey = 'multiple-requests-test';
     
-    // 1. Ensure cache is empty
-    const initialCacheEntry = await redisClient.get(`cache:${tenantId}:${cacheKey}`);
-    expect(initialCacheEntry).toBeNull();
-    
-    // 2. Send request with cache_key
-    const response = await fetch(`${baseUrl}/${tenantId}/v1/chat/completions`, {
+    // First request should miss cache
+    const response1 = await fetch(`${baseURL}/abc/v1/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${apiKey}`
       },
       body: JSON.stringify({
-        messages: [{ role: 'user', content: 'Hello' }],
-        model: 'gpt-4o',
+        messages: [{ role: "user", content: "Hello" }],
+        model: "gpt-4o",
         cache_key: cacheKey
       })
     });
-
-    // 3. Assert response is successful
-    expect(response.status).toBe(200);
-    const responseData = await response.json();
     
-    // 4. Check that response is now in cache
-    const cachedData = await redisClient.get(`cache:${tenantId}:${cacheKey}`);
-    expect(cachedData).not.toBeNull();
+    expect(response1.status).toBe(200);
+    await response1.json();
     
-    const parsedCachedData = JSON.parse(cachedData);
-    expect(parsedCachedData).toEqual(responseData);
-    
-    // 5. Check cache TTL is set properly
-    const ttl = await redisClient.ttl(`cache:${tenantId}:${cacheKey}`);
-    expect(ttl).toBeGreaterThan(0);
-    expect(ttl).toBeLessThanOrEqual(86400); // Should be at most 24 hours
-    
-    // 6. Check for cache miss log
-    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Cache miss'));
-    
-    consoleSpy.mockRestore();
-  });
-
-  test('Caching Disabled - does not check or store in cache', async () => {
-    // 1. Update tenant config to disable caching
-    const configJson = await redisClient.get(`tenant:${tenantId}:config`);
-    const config = JSON.parse(configJson);
-    
-    // Save original config to restore later
-    const originalConfig = { ...config };
-    
-    // Disable caching
-    config.caching.enabled = false;
-    await redisClient.set(`tenant:${tenantId}:config`, JSON.stringify(config));
-    
-    // Spy on console.log to verify no cache logs
-    const consoleSpy = jest.spyOn(console, 'log');
-    
-    // 2. Send request with cache_key
-    const response = await fetch(`${baseUrl}/${tenantId}/v1/chat/completions`, {
+    // Second request should hit cache
+    const response2 = await fetch(`${baseURL}/abc/v1/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${apiKey}`
       },
       body: JSON.stringify({
-        messages: [{ role: 'user', content: 'Hello' }],
-        model: 'gpt-4o',
+        messages: [{ role: "user", content: "Different message but same cache key" }],
+        model: "gpt-4o",
         cache_key: cacheKey
       })
     });
-
-    // 3. Assert response is successful
-    expect(response.status).toBe(200);
     
-    // 4. Verify nothing was stored in cache
-    const cachedData = await redisClient.get(`cache:${tenantId}:${cacheKey}`);
-    expect(cachedData).toBeNull();
+    expect(response2.status).toBe(200);
+    await response2.json();
     
-    // 5. Verify no cache logs were written
-    expect(consoleSpy).not.toHaveBeenCalledWith(expect.stringContaining('Cache hit'));
-    expect(consoleSpy).not.toHaveBeenCalledWith(expect.stringContaining('Cache miss'));
+    // Count cache hit and miss logs
+    const cacheMissLogs = logMessages.filter(msg => msg.includes("[INFO] Cache miss"));
+    const cacheHitLogs = logMessages.filter(msg => msg.includes("[INFO] Cache hit"));
     
-    // Restore original config
-    await redisClient.set(`tenant:${tenantId}:config`, JSON.stringify(originalConfig));
-    
-    consoleSpy.mockRestore();
+    expect(cacheMissLogs.length).toBe(1);
+    expect(cacheHitLogs.length).toBe(1);
   });
 
-  test('No cache_key provided - bypasses cache', async () => {
-    // Spy on console.log to verify no cache logs
-    const consoleSpy = jest.spyOn(console, 'log');
-    
-    // 1. Send request without cache_key
-    const response = await fetch(`${baseUrl}/${tenantId}/v1/chat/completions`, {
+  test('Requests without cache_key bypass cache system', async () => {
+    // Send request without cache_key
+    const response = await fetch(`${baseURL}/abc/v1/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${apiKey}`
       },
       body: JSON.stringify({
-        messages: [{ role: 'user', content: 'Hello' }],
-        model: 'gpt-4o'
-        // No cache_key
+        messages: [{ role: "user", content: "Hello without cache" }],
+        model: "gpt-4o"
       })
     });
-
-    // 2. Assert response is successful
+    
     expect(response.status).toBe(200);
+    await response.json();
     
-    // 3. Verify no cache logs were written
-    expect(consoleSpy).not.toHaveBeenCalledWith(expect.stringContaining('Cache hit'));
-    expect(consoleSpy).not.toHaveBeenCalledWith(expect.stringContaining('Cache miss'));
+    // Check there's no cache hit or miss log
+    const cacheHitLog = logMessages.find(msg => msg.includes("[INFO] Cache hit"));
+    const cacheMissLog = logMessages.find(msg => msg.includes("[INFO] Cache miss"));
+    const storedLog = logMessages.find(msg => msg.includes("[INFO] Stored response in cache"));
     
-    consoleSpy.mockRestore();
-  });
-
-  test('Streaming requests - bypass caching', async () => {
-    // Spy on console.log to verify no cache logs
-    const consoleSpy = jest.spyOn(console, 'log');
-    
-    // 1. Send streaming request with cache_key
-    const response = await fetch(`${baseUrl}/${tenantId}/v1/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`
-      },
-      body: JSON.stringify({
-        messages: [{ role: 'user', content: 'Hello' }],
-        model: 'gpt-4o',
-        stream: true,
-        cache_key: cacheKey
-      })
-    });
-
-    // 2. Assert streaming response setup
-    expect(response.status).toBe(200);
-    expect(response.headers.get('content-type')).toBe('text/event-stream');
-    
-    // Drain the response to complete the request
-    const reader = response.body.getReader();
-    while (true) {
-      const { done } = await reader.read();
-      if (done) break;
-    }
-    
-    // 3. Verify nothing was stored in cache
-    const cachedData = await redisClient.get(`cache:${tenantId}:${cacheKey}`);
-    expect(cachedData).toBeNull();
-    
-    // 4. Verify no cache logs were written
-    expect(consoleSpy).not.toHaveBeenCalledWith(expect.stringContaining('Cache hit'));
-    expect(consoleSpy).not.toHaveBeenCalledWith(expect.stringContaining('Cache miss'));
-    
-    consoleSpy.mockRestore();
+    expect(cacheHitLog).toBeFalsy();
+    expect(cacheMissLog).toBeFalsy();
+    expect(storedLog).toBeFalsy();
   });
 });

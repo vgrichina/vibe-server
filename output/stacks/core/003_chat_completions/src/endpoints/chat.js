@@ -1,244 +1,183 @@
-import { Readable } from 'stream';
+import { PassThrough } from 'stream';
+import { v4 as uuidv4 } from 'uuid';
 
-// Validate the chat completion request body
-const validateRequestBody = (body) => {
-  // Check for required messages array
-  if (!body.messages || !Array.isArray(body.messages)) {
-    return { valid: false, error: "messages must be an array" };
-  }
-
-  // Validate each message has role and content
-  for (const message of body.messages) {
-    if (!message.role || !message.content) {
-      return { valid: false, error: "each message must have role and content fields" };
-    }
-  }
-
-  return { valid: true };
-};
-
-// Validate user authentication and extract user info
-const validateAuth = async (ctx, redisClient) => {
-  const authHeader = ctx.headers.authorization;
+// PROMPT: Add the `/:tenantId/v1/chat/completions` endpoint for text-based LLM interactions
+export async function handleChatCompletions(ctx) {
+  const { tenantId } = ctx.params;
+  const { tenantConfig } = ctx.state;
+  const jobId = uuidv4();
   
+  console.log(`[INFO] Processing chat completion for ${tenantId}:${jobId}`);
+  
+  // PROMPT: Validate Bearer token with auth service
+  const authHeader = ctx.request.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     ctx.status = 401;
-    ctx.body = { error: { message: "Authentication required" } };
-    return null;
+    ctx.body = { error: { message: 'Missing or invalid authorization token' } };
+    return;
   }
   
-  const apiKey = authHeader.substring(7); // Remove 'Bearer ' prefix
+  const apiKey = authHeader.split(' ')[1];
+  const userId = await ctx.app.redisClient.get(`apiKey:${apiKey}`);
   
-  // Get user ID from API key
-  const userId = await redisClient.get(`apiKey:${apiKey}`);
   if (!userId) {
     ctx.status = 401;
-    ctx.body = { error: { message: "Invalid API key" } };
-    return null;
+    ctx.body = { error: { message: 'Invalid authorization token' } };
+    return;
   }
-
-  // Get user data
-  const userDataJson = await redisClient.get(`user:${userId}`);
-  if (!userDataJson) {
-    ctx.status = 500;
-    ctx.body = { error: { message: "User data not found" } };
-    return null;
-  }
-
-  const userData = JSON.parse(userDataJson);
   
-  // Check if user has access to this tenant
-  if (userData.tenantId !== ctx.state.tenantId) {
-    ctx.status = 403;
-    ctx.body = { error: { message: "Unauthorized tenant access" } };
-    return null;
+  // PROMPT: Fetch user data from Redis using user ID. This includes the user's token balance.
+  const userDataStr = await ctx.app.redisClient.get(`user:${userId}`);
+  if (!userDataStr) {
+    ctx.status = 401;
+    ctx.body = { error: { message: 'User not found' } };
+    return;
   }
-
-  return userData;
-};
-
-// Check if user has sufficient tokens
-const checkUserTokens = async (ctx, userData) => {
+  
+  const userData = JSON.parse(userDataStr);
+  
+  // PROMPT: If tokens < 1, return 429 with `{"error": "Insufficient tokens"}`
   if (userData.tokensLeft < 1) {
     ctx.status = 429;
-    ctx.body = { error: { message: "Insufficient tokens" } };
-    return false;
+    ctx.body = { error: { message: 'Insufficient tokens' } };
+    return;
   }
-  return true;
-};
-
-// Create the streaming SSE response
-const createStreamingResponse = (ctx, conversationId, provider, requestBody, providerEndpoint, apiKey) => {
-  ctx.set('Content-Type', 'text/event-stream');
-  ctx.set('Cache-Control', 'no-cache');
-  ctx.set('Connection', 'keep-alive');
-  ctx.status = 200;
-
-  const stream = new Readable({
-    read() {}
-  });
-
-  ctx.body = stream;
-
-  // Make streaming request to the provider
-  (async () => {
+  
+  // PROMPT: Rate limit requests per user per tenant
+  const userGroup = userData.userGroup;
+  const rateLimitConfig = tenantConfig.user_groups[userGroup];
+  
+  if (!rateLimitConfig) {
+    ctx.status = 403;
+    ctx.body = { error: { message: 'User group not configured' } };
+    return;
+  }
+  
+  const windowSize = rateLimitConfig.rate_limit_window;
+  const windowTimestamp = Math.floor(Date.now() / (windowSize * 1000)) * (windowSize * 1000);
+  const rateLimitKey = `rate_limit:${userId}:${windowTimestamp}`;
+  
+  const currentRequests = await ctx.app.redisClient.incr(rateLimitKey);
+  await ctx.app.redisClient.expire(rateLimitKey, windowSize * 2);
+  
+  if (currentRequests > rateLimitConfig.rate_limit) {
+    ctx.status = 429;
+    ctx.body = { error: { message: 'Rate limit exceeded' } };
+    return;
+  }
+  
+  // PROMPT: Validate body
+  const { messages, model, stream = false } = ctx.request.body;
+  
+  if (!messages || !Array.isArray(messages)) {
+    ctx.status = 400;
+    ctx.body = { error: { message: 'Invalid messages format' } };
+    return;
+  }
+  
+  for (const message of messages) {
+    if (!message.role || !message.content) {
+      ctx.status = 400;
+      ctx.body = { error: { message: 'Messages must have role and content fields' } };
+      return;
+    }
+  }
+  
+  // PROMPT: Check provider API key in tenant config; return 403 if missing
+  const providerConfig = tenantConfig.providers.text;
+  const providerEndpoint = providerConfig.endpoints[providerConfig.default];
+  
+  if (!providerEndpoint || !providerEndpoint.api_key) {
+    ctx.status = 403;
+    ctx.body = { error: { message: 'Provider API key missing in tenant configuration' } };
+    return;
+  }
+  
+  const modelToUse = model || providerEndpoint.default_model;
+  const apiUrl = providerEndpoint.url;
+  
+  // PROMPT: Generate conversation ID if not provided
+  const conversationId = ctx.request.body.conversation_id || `conv-${uuidv4()}`;
+  
+  // Prepare the request to the LLM provider
+  const requestBody = {
+    messages,
+    model: modelToUse,
+    stream,
+  };
+  
+  // PROMPT: If `stream: true`
+  if (stream) {
+    ctx.set('Content-Type', 'text/event-stream');
+    ctx.set('Cache-Control', 'no-cache');
+    ctx.set('Connection', 'keep-alive');
+    ctx.status = 200;
+    
+    const passThrough = new PassThrough();
+    ctx.body = passThrough;
+    
     try {
-      const providerResponse = await fetch(providerEndpoint.url, {
+      const response = await fetch(apiUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${providerEndpoint.api_key}`
         },
-        body: JSON.stringify({
-          ...requestBody,
-          model: requestBody.model || providerEndpoint.default_model
-        })
+        body: JSON.stringify(requestBody),
       });
-
-      if (!providerResponse.ok) {
-        const errorData = await providerResponse.json();
-        stream.push(`data: ${JSON.stringify({ error: errorData })}\n\n`);
-        stream.push(null);
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        passThrough.write(`data: ${JSON.stringify(errorData)}\n\n`);
+        passThrough.end();
         return;
       }
-
-      const reader = providerResponse.body.getReader();
-      const decoder = new TextDecoder();
-
+      
+      const reader = response.body.getReader();
+      
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         
-        const chunk = decoder.decode(value, { stream: true });
-        const lines = chunk.split('\n');
-        
-        for (const line of lines) {
-          if (line.startsWith('data: ') && line !== 'data: [DONE]') {
-            // Forward the SSE data to client
-            stream.push(`${line}\n\n`);
-          } else if (line === 'data: [DONE]') {
-            stream.push(`data: [DONE]\n\n`);
-          }
-        }
+        const chunk = new TextDecoder().decode(value);
+        passThrough.write(chunk);
       }
       
-      stream.push(null);
+      passThrough.end();
     } catch (error) {
-      console.error(`[ERROR] Streaming error: ${error.message}`);
-      stream.push(`data: ${JSON.stringify({ error: { message: "Streaming error occurred" } })}\n\n`);
-      stream.push(null);
+      passThrough.write(`data: ${JSON.stringify({ error: { message: 'Error connecting to provider' } })}\n\n`);
+      passThrough.end();
     }
-  })();
-
-  return stream;
-};
-
-// Handle non-streaming response
-const handleNonStreamingResponse = async (ctx, conversationId, provider, requestBody, providerEndpoint) => {
-  try {
-    const providerResponse = await fetch(providerEndpoint.url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${providerEndpoint.api_key}`
-      },
-      body: JSON.stringify({
-        ...requestBody,
-        model: requestBody.model || providerEndpoint.default_model,
-        stream: false
-      })
-    });
-
-    if (!providerResponse.ok) {
-      const errorData = await providerResponse.json();
-      ctx.status = providerResponse.status;
-      ctx.body = { error: { message: errorData.error?.message || "Provider error" } };
-      return;
-    }
-
-    const responseData = await providerResponse.json();
-    
-    // Transform to OpenAI-compatible format if needed
-    ctx.body = {
-      id: conversationId,
-      choices: [{
-        message: {
-          role: "assistant",
-          content: responseData.content || responseData.choices?.[0]?.message?.content
-        }
-      }]
-    };
-    
-  } catch (error) {
-    console.error(`[ERROR] Non-streaming error: ${error.message}`);
-    ctx.status = 500;
-    ctx.body = { error: { message: "An error occurred processing your request" } };
-  }
-};
-
-// Chat completions endpoint handler
-export const chatCompletions = (redisClient) => async (ctx) => {
-  const { tenantId, tenantConfig } = ctx.state;
-  const jobId = Math.random().toString(36).substring(2, 10);
-  console.log(`[INFO] Processing chat completion for ${tenantId}:${jobId}`);
-
-  // Validate request body
-  const requestBody = ctx.request.body;
-  const validation = validateRequestBody(requestBody);
-  if (!validation.valid) {
-    ctx.status = 400;
-    ctx.body = { error: { message: validation.error } };
-    return;
-  }
-
-  // Authenticate user
-  const userData = await validateAuth(ctx, redisClient);
-  if (!userData) return;
-
-  // Check user token balance
-  const hasTokens = await checkUserTokens(ctx, userData);
-  if (!hasTokens) return;
-
-  // Apply rate limiting (based on tenant config and user group)
-  const userGroup = userData.userGroup;
-  const rateLimitConfig = tenantConfig.user_groups[userGroup];
-  if (!rateLimitConfig) {
-    ctx.status = 500;
-    ctx.body = { error: { message: "Invalid user group configuration" } };
-    return;
-  }
-
-  // Get rate limit key and check if exceeded
-  const rateLimitKey = `ratelimit:${tenantId}:${userData.userId}`;
-  const currentRequests = await redisClient.get(rateLimitKey) || 0;
-  
-  if (parseInt(currentRequests) >= rateLimitConfig.rate_limit) {
-    ctx.status = 429;
-    ctx.body = { error: { message: "Rate limit exceeded" } };
-    return;
-  }
-  
-  // Increment rate limit counter
-  await redisClient.incr(rateLimitKey);
-  await redisClient.expire(rateLimitKey, rateLimitConfig.rate_limit_window);
-
-  // Get provider config
-  const provider = tenantConfig.providers.text?.default || "openai";
-  const providerEndpoint = tenantConfig.providers.text?.endpoints?.[provider];
-  
-  if (!providerEndpoint) {
-    ctx.status = 500;
-    ctx.body = { error: { message: "Provider configuration not found" } };
-    return;
-  }
-
-  // Generate conversation ID if not provided
-  const conversationId = requestBody.conversation_id || `conv-${Math.random().toString(36).substring(2, 10)}`;
-
-  // Handle streaming vs non-streaming responses
-  if (requestBody.stream === true) {
-    createStreamingResponse(ctx, conversationId, provider, requestBody, providerEndpoint);
   } else {
-    await handleNonStreamingResponse(ctx, conversationId, provider, requestBody, providerEndpoint);
+    // PROMPT: If `stream: false`
+    try {
+      const response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${providerEndpoint.api_key}`
+        },
+        body: JSON.stringify(requestBody),
+      });
+      
+      const responseData = await response.json();
+      
+      if (!response.ok) {
+        ctx.status = response.status;
+        ctx.body = responseData;
+        return;
+      }
+      
+      // PROMPT: Pass through the response from the provider, don't remove any fields
+      ctx.status = 200;
+      ctx.body = responseData;
+    } catch (error) {
+      ctx.status = 500;
+      ctx.body = { error: { message: 'Error connecting to provider' } };
+    }
   }
-};
+  
+  // Update user token balance (decrement by 1 for this simple implementation)
+  userData.tokensLeft -= 1;
+  await ctx.app.redisClient.set(`user:${userId}`, JSON.stringify(userData));
+}

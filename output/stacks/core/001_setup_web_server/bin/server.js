@@ -4,25 +4,7 @@ import bodyParser from 'koa-bodyparser';
 import { createClient } from 'redis';
 import { v4 as uuidv4 } from 'uuid';
 
-// Default configurations
-const PORT = process.env.PORT || 3000;
-const HOST = process.env.HOST || 'localhost';
-const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
-
-// Create Redis client
-const createRedisClient = async () => {
-  const client = createClient({ url: REDIS_URL });
-  
-  client.on('error', (err) => {
-    console.error(`[ERROR] Redis connection failed: ${err}`);
-    process.exit(1);
-  });
-
-  await client.connect();
-  return client;
-};
-
-// Default tenant configuration for "abc"
+// PROMPT: Store tenant configs in Redis using the key pattern: `tenant:<tenantId>:config`.
 const DEFAULT_TENANT_CONFIG = {
   auth: {
     stripe: {
@@ -94,198 +76,152 @@ const DEFAULT_TENANT_CONFIG = {
   }
 };
 
-// Setup initial tenant config if it doesn't exist
-const setupInitialTenantConfig = async (redisClient) => {
-  const tenantId = 'abc';
-  const key = `tenant:${tenantId}:config`;
-  const existingConfig = await redisClient.get(key);
-  
-  if (!existingConfig) {
-    await redisClient.set(key, JSON.stringify(DEFAULT_TENANT_CONFIG));
-    console.log(`[INFO] Created initial tenant config for ${tenantId}`);
-  } else {
-    console.log(`[INFO] Using existing tenant config for ${tenantId}`);
-  }
-};
-
-// Middleware to verify and load tenant config
-const tenantMiddleware = (redisClient) => async (ctx, next) => {
-  const tenantId = ctx.params.tenantId;
-  if (!tenantId) {
-    ctx.status = 400;
-    ctx.body = { error: "Tenant ID is required" };
-    return;
-  }
-
-  try {
-    const configJson = await redisClient.get(`tenant:${tenantId}:config`);
-    if (!configJson) {
-      ctx.status = 400;
-      ctx.body = { error: "Invalid tenant ID" };
-      return;
-    }
-
-    ctx.state.tenantConfig = JSON.parse(configJson);
-    ctx.state.tenantId = tenantId;
-    console.log(`[INFO] Loaded tenant config for ${tenantId}`);
-    await next();
-  } catch (error) {
-    console.error(`[ERROR] Failed to load tenant config: ${error}`);
-    ctx.status = 500;
-    ctx.body = { error: "Internal Server Error" };
-  }
-};
-
-// Authentication middleware for admin routes
-const adminAuthMiddleware = () => async (ctx, next) => {
-  const authHeader = ctx.headers.authorization;
-  
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    ctx.status = 401;
-    ctx.body = { error: "Authentication required" };
-    return;
-  }
-  
-  const token = authHeader.substring(7); // Remove 'Bearer ' prefix
-  
-  // For simplicity, we're just checking if the token exists
-  // In a real app, you'd verify the token's validity
-  if (!token) {
-    ctx.status = 401;
-    ctx.body = { error: "Invalid token" };
-    return;
-  }
-  
-  // TODO: Add proper admin token validation
-  
-  await next();
-};
-
-// Create a new anonymous user with API key
-const createAnonymousUser = async (redisClient, tenantId, tenantConfig) => {
-  const userId = `anon_${uuidv4()}`;
-  const apiKey = `temp_${uuidv4()}`;
-  const anonymousConfig = tenantConfig.user_groups.anonymous;
-  
-  const userData = {
-    userId,
-    createdAt: new Date().toISOString(),
-    tokensLeft: anonymousConfig.tokens,
-    userGroup: 'anonymous',
-    tenantId
-  };
-  
-  await redisClient.set(`user:${userId}`, JSON.stringify(userData));
-  await redisClient.set(`apiKey:${apiKey}`, userId);
-  
-  return { 
-    apiKey,
-    tokensLeft: anonymousConfig.tokens
-  };
-};
-
-// Create the Koa application
-export const createApp = async ({ redisClient }) => {
+// PROMPT: Expose `createApp` function
+export async function createApp(deps) {
   const app = new Koa();
   const router = new Router();
+  const redisClient = deps?.redisClient || createClient({ url: process.env.REDIS_URL || 'redis://localhost:6379' });
   
-  // Setup error handling
+  // PROMPT: Ensure Redis client is initialized before the server starts listening.
+  if (!redisClient.isOpen) {
+    try {
+      await redisClient.connect();
+    } catch (error) {
+      console.error(`[ERROR] Redis connection failed: ${error.message}`);
+      process.exit(1);
+    }
+  }
+
+  // PROMPT: Ensure default tenant config is set up
+  const defaultTenantKey = 'tenant:abc:config';
+  const existingConfig = await redisClient.get(defaultTenantKey);
+  if (!existingConfig) {
+    await redisClient.set(defaultTenantKey, JSON.stringify(DEFAULT_TENANT_CONFIG));
+  }
+
+  // PROMPT: Catch uncaught exceptions and log them to console with prefix `[ERROR]`.
   app.use(async (ctx, next) => {
     try {
       await next();
     } catch (err) {
-      console.error(`[ERROR] ${err}`);
+      console.error(`[ERROR] ${err.stack || err.message}`);
       ctx.status = 500;
-      ctx.body = { error: "Internal Server Error" };
+      ctx.body = { error: 'Internal Server Error' };
     }
   });
-  
-  // Use body parser
+
   app.use(bodyParser());
-  
-  // Root endpoint
-  router.get('/', async (ctx) => {
+
+  // PROMPT: Root Endpoint Returns a JSON response: `{"message": "vibe-server API is running"}`
+  router.get('/', (ctx) => {
     ctx.status = 200;
     ctx.set('Content-Type', 'application/json');
-    ctx.body = { message: "vibe-server API is running" };
+    ctx.body = { message: 'vibe-server API is running' };
   });
-  
-  // Anonymous login endpoint
-  router.post('/:tenantId/auth/anonymous', tenantMiddleware(redisClient), async (ctx) => {
-    const { tenantId, tenantConfig } = ctx.state;
-    const userData = await createAnonymousUser(redisClient, tenantId, tenantConfig);
+
+  // PROMPT: Fetch the tenant config from Redis using `GET` and parse with `JSON.parse`.
+  const tenantMiddleware = async (ctx, next) => {
+    const { tenantId } = ctx.params;
+    const tenantConfigKey = `tenant:${tenantId}:config`;
+    const tenantConfig = await redisClient.get(tenantConfigKey);
+
+    if (!tenantConfig) {
+      ctx.status = 400;
+      ctx.body = { error: 'Invalid tenant ID' };
+      return;
+    }
+
+    ctx.state.tenantConfig = JSON.parse(tenantConfig);
+    console.log(`[INFO] Loaded tenant config for ${tenantId}`);
+    await next();
+  };
+
+  // PROMPT: Create new temporary user in Redis with anonymous user group limits
+  router.post('/:tenantId/auth/anonymous', tenantMiddleware, async (ctx) => {
+    const { tenantId } = ctx.params;
+    const { tenantConfig } = ctx.state;
+    const userId = `anonymous_${uuidv4()}`;
+    const apiKey = `temp_${uuidv4()}`;
+    const tokensLeft = tenantConfig.user_groups.anonymous.tokens;
+    
+    const userData = {
+      createdAt: new Date().toISOString(),
+      tokensLeft,
+      userGroup: 'anonymous'
+    };
+    
+    await redisClient.set(`user:${userId}`, JSON.stringify(userData));
+    await redisClient.set(`apiKey:${apiKey}`, userId);
+    
     ctx.status = 200;
-    ctx.body = userData;
+    ctx.body = {
+      apiKey,
+      tokensLeft
+    };
   });
-  
-  // Get tenant config (admin)
-  router.get('/:tenantId/admin/config', 
-    tenantMiddleware(redisClient),
-    adminAuthMiddleware(),
-    async (ctx) => {
-      ctx.status = 200;
-      ctx.body = { config: ctx.state.tenantConfig };
+
+  // PROMPT: GET retrieves current tenant config for the specified tenant.
+  router.get('/:tenantId/admin/config', tenantMiddleware, async (ctx) => {
+    // Basic admin auth check - in a real implementation, this would be more robust
+    const authHeader = ctx.request.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      ctx.status = 401;
+      ctx.body = { error: 'Unauthorized' };
+      return;
     }
-  );
-  
-  // Update tenant config (admin)
-  router.put('/:tenantId/admin/config', 
-    tenantMiddleware(redisClient),
-    adminAuthMiddleware(),
-    async (ctx) => {
-      const { tenantId } = ctx.state;
-      const { config } = ctx.request.body;
-      
-      if (!config) {
-        ctx.status = 400;
-        ctx.body = { error: "Config object is required" };
-        return;
-      }
-      
-      try {
-        await redisClient.set(`tenant:${tenantId}:config`, JSON.stringify(config));
-        ctx.status = 200;
-        ctx.body = { success: true };
-      } catch (error) {
-        console.error(`[ERROR] Failed to update tenant config: ${error}`);
-        ctx.status = 500;
-        ctx.body = { error: "Failed to update tenant configuration" };
-      }
+    
+    ctx.status = 200;
+    ctx.body = {
+      config: ctx.state.tenantConfig
+    };
+  });
+
+  // PROMPT: PUT updates tenant config (full replace).
+  router.put('/:tenantId/admin/config', tenantMiddleware, async (ctx) => {
+    const { tenantId } = ctx.params;
+    const authHeader = ctx.request.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      ctx.status = 401;
+      ctx.body = { error: 'Unauthorized' };
+      return;
     }
-  );
-  
+    
+    const { config } = ctx.request.body;
+    if (!config) {
+      ctx.status = 400;
+      ctx.body = { error: 'Config object is required' };
+      return;
+    }
+    
+    await redisClient.set(`tenant:${tenantId}:config`, JSON.stringify(config));
+    
+    ctx.status = 200;
+    ctx.body = { success: true };
+  });
+
   app.use(router.routes());
   app.use(router.allowedMethods());
-  
-  return app;
-};
 
-// Start server only if file is executed directly (not imported)
+  // PROMPT: Ensure the server shuts down gracefully on SIGTERM/SIGINT
+  const gracefulShutdown = async () => {
+    console.log('[INFO] Server shutting down');
+    await redisClient.quit();
+    process.exit(0);
+  };
+
+  process.on('SIGTERM', gracefulShutdown);
+  process.on('SIGINT', gracefulShutdown);
+
+  return app;
+}
+
+// PROMPT: Don't start server when used as a module.
 if (import.meta.url.endsWith(process.argv[1])) {
-  (async () => {
-    try {
-      const redisClient = await createRedisClient();
-      await setupInitialTenantConfig(redisClient);
-      
-      const app = await createApp({ redisClient });
-      const server = app.listen(PORT, HOST, () => {
-        console.log(`[INFO] Server running at http://${HOST}:${PORT}`);
-      });
-      
-      // Graceful shutdown
-      const shutdown = async () => {
-        console.log('[INFO] Server shutting down');
-        server.close();
-        await redisClient.quit();
-        process.exit(0);
-      };
-      
-      process.on('SIGTERM', shutdown);
-      process.on('SIGINT', shutdown);
-      
-    } catch (error) {
-      console.error(`[ERROR] Server startup failed: ${error}`);
-      process.exit(1);
-    }
-  })();
+  const app = await createApp();
+  const port = process.env.PORT || 3000;
+  const host = process.env.HOST || 'localhost';
+  
+  app.listen(port, host, () => {
+    console.log(`[INFO] Server listening on http://${host}:${port}`);
+  });
 }
