@@ -8,7 +8,9 @@ Add a minimal viable admin dashboard for configuring tenants in the vibe-server 
   - **Request**:
     - Body: `{ "username": "admin", "password": "secure-password" }`
   - **Behavior**:
-    - Validate credentials against Redis: `admin:<username>:hash`
+    - Validate credentials against Redis: `admin:<username>`
+        - Store hashed password, and salt
+        - Hash password with `crypto.scrypt(password, salt, 64)`
     - On success: Set session cookie and redirect to dashboard
     - On failure: Return to login with error
   - **Error Responses**:
@@ -98,7 +100,7 @@ Add a minimal viable admin dashboard for configuring tenants in the vibe-server 
 
 ## Security Implementation
 - **CSRF Protection**:
-  - Generate CSRF token on login
+  - Avoid using `koa-csrf`
   - Include in all form submissions: `<input type="hidden" name="_csrf" value="{csrf_token}">`
   - Validate on all POST/PUT/DELETE requests
 - **Rate Limiting**:
@@ -108,17 +110,22 @@ Add a minimal viable admin dashboard for configuring tenants in the vibe-server 
   - Log all admin actions for audit purposes: `log:admin:{action}:{timestamp}`
   - Include IP address, admin username, and affected resources
 
+## UI Design
+- Use Tailwind CSS for styling without build step (CDN version)
+- Make sure that the UI is responsive and works on all devices
+- Utilize wide screen real estate to display more information
+- Use HTMX for interactive elements (hx-get, hx-post, hx-put, hx-delete)
+    - Make sure that every view can be rendered as a partial HTML snippet for HTMX requests
+    - Use hx-target to specify the target element for the response, snippet should fit accordingly
+    - Add confirmation dialogs for destructive actions using hx-confirm
+    - Support incremental updates without full page refreshes using hx-swap
+
 ## Implementation Notes
 - Use Koa.js for routing and middleware
 - Use Koa-session for authentication
-- Don't use bcrypt; use built-in crypto module
-- Use HTMX for interactive elements (hx-get, hx-post, hx-put, hx-delete)
-- Use Tailwind CSS for styling without build step (CDN version)
 - Mask sensitive data (API keys) with partial visibility: `sk_...**********1234`
 - Implement form validation with inline errors using HTMX validation response
-- Add confirmation dialogs for destructive actions using hx-confirm
 - Use server-rendered templates without client-side JavaScript frameworks
-- Support incremental updates without full page refreshes using hx-swap
 
 ## Error Handling
 - Show clear, actionable error messages
