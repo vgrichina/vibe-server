@@ -6,7 +6,7 @@ import { v4 as uuidv4 } from 'uuid';
 import websockify from 'koa-easy-ws';
 import { handleChatCompletions } from '../src/endpoints/chat.js';
 import realtimeEndpoints from '../src/endpoints/realtime.js';
-import { handleLogin, handleRefresh } from '../src/endpoints/auth.js';
+import authEndpoints from '../src/endpoints/auth.js';
 
 // PROMPT: Store tenant configs in Redis using the key pattern: `tenant:<tenantId>:config`.
 const DEFAULT_TENANT_CONFIG = {
@@ -37,6 +37,11 @@ const DEFAULT_TENANT_CONFIG = {
       rate_limit_window: 60
     },
     google_logged_in: {
+      tokens: 1000,
+      rate_limit: 50,
+      rate_limit_window: 60
+    },
+    apple_logged_in: {
       tokens: 1000,
       rate_limit: 50,
       rate_limit_window: 60
@@ -177,11 +182,11 @@ export async function createApp(deps) {
     };
   });
 
-  // PROMPT: OAuth Authentication - Auth Endpoint: `POST /:tenantId/auth/login`
-  router.post('/:tenantId/auth/login', tenantMiddleware, handleLogin);
-  
-  // PROMPT: API Key Refresh - Refresh Endpoint: `POST /:tenantId/auth/refresh`
-  router.post('/:tenantId/auth/refresh', tenantMiddleware, handleRefresh);
+  // PROMPT: Auth Endpoint: `POST /:tenantId/auth/login`
+  router.post('/:tenantId/auth/login', tenantMiddleware, authEndpoints.loginHandler);
+
+  // PROMPT: Refresh Endpoint: `POST /:tenantId/auth/refresh`
+  router.post('/:tenantId/auth/refresh', tenantMiddleware, authEndpoints.refreshHandler);
 
   // PROMPT: GET retrieves current tenant config for the specified tenant.
   router.get('/:tenantId/admin/config', tenantMiddleware, async (ctx) => {
